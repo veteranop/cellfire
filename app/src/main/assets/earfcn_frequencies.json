@@ -1,0 +1,74 @@
+{
+  "lte": {
+    "bands": {
+      "B2": {
+        "dl_low": 1930.0,
+        "dl_offset": 600,
+        "ul_low": 1850.0,
+        "ul_offset": 18600,
+        "duplex": "FDD",
+        "range_len": 600
+      },
+      "B4": {
+        "dl_low": 2110.0,
+        "dl_offset": 1950,
+        "ul_low": 1710.0,
+        "ul_offset": 19950,
+        "duplex": "FDD",
+        "range_len": 450
+      },
+      "B5": {
+        "dl_low": 869.0,
+        "dl_offset": 2400,
+        "ul_low": 824.0,
+        "ul_offset": 20400,
+        "duplex": "FDD",
+        "range_len": 250
+      },
+      "B12": {
+        "dl_low": 729.0,
+        "dl_offset": 5010,
+        "ul_low": 699.0,
+        "ul_offset": 23010,
+        "duplex": "FDD",
+        "range_len": 170
+      },
+      "B13": {
+        "dl_low": 746.0,
+        "dl_offset": 5280,
+        "ul_low": 777.0,
+        "ul_offset": 23280,
+        "duplex": "FDD",
+        "range_len": 100
+      },
+      "B66": {
+        "dl_low": 2110.0,
+        "dl_offset": 66436,
+        "ul_low": 1710.0,
+        "ul_offset": 131972,
+        "duplex": "FDD",
+        "range_len": 900
+      }
+    }
+  },
+  "nr": {
+    "global": {
+      "low": {
+        "f_ref_low": 0,
+        "n_ref_offset": 0,
+        "delta_f": 15
+      },
+      "mid": {
+        "f_ref_low": 24250.08,
+        "n_ref_offset": 600000,
+        "delta_f": 60
+      },
+      "high": {
+        "f_ref_low": 24250.08,
+        "n_ref_offset": 2016667,
+        "delta_f": 60
+      }
+    },
+    "bands": {}
+  }
+}

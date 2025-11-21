@@ -19,64 +19,13 @@ import java.util.*
 import javax.inject.Inject
 
 // ==================================================
-// DATA MODELS
-// ==================================================
-
-sealed class Cell {
-    abstract val pci: Int
-    abstract val arfcn: Int
-    abstract val band: String
-    abstract val signalStrength: Int
-    abstract val signalQuality: Int
-    abstract val isRegistered: Boolean
-    abstract val carrier: String
-    abstract val type: String
-    abstract val tac: Int
-    abstract val lastSeen: Long
-}
-
-data class LteCell(
-    override val pci: Int,
-    override val arfcn: Int,
-    override val band: String,
-    override val signalStrength: Int,
-    override val signalQuality: Int,
-    override val isRegistered: Boolean,
-    override val carrier: String,
-    override val tac: Int,
-    override val lastSeen: Long = System.currentTimeMillis()
-) : Cell() {
-    override val type: String = "LTE"
-}
-
-data class NrCell(
-    override val pci: Int,
-    override val arfcn: Int,
-    override val band: String,
-    override val signalStrength: Int,
-    override val signalQuality: Int,
-    override val isRegistered: Boolean,
-    override val carrier: String,
-    override val tac: Int,
-    override val lastSeen: Long = System.currentTimeMillis()
-) : Cell() {
-    override val type: String = "5G NR"
-}
-
-data class CellFireUiState(
-    val allPermissionsGranted: Boolean = false,
-    val isMonitoring: Boolean = false,
-    val cells: List<Cell> = emptyList(),
-    val logLines: List<String> = emptyList()
-)
-
-// ==================================================
 // VIEW MODEL — FINAL
 // ==================================================
 
 @HiltViewModel
 class CellFireViewModel @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val cellRepository: CellRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CellFireUiState())
@@ -159,7 +108,7 @@ class CellFireViewModel @Inject constructor(
                 val rsrp = sig.rsrp.coerceIn(-140, -44)
                 val rssnr = if (sig.rssnr != Int.MAX_VALUE) sig.rssnr else 0
                 val (band, bandInferredCarrier) = earfcnToBandAndCarrier(id.earfcn)
-                
+
                 var carrier = if (info.isRegistered) {
                     telephonyManager.networkOperatorName
                 } else {
