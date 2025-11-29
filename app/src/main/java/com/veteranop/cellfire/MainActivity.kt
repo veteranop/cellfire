@@ -25,9 +25,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.veteranop.cellfire.ui.theme.CellFireTheme
 import dagger.hilt.android.AndroidEntryPoint
 import org.osmdroid.config.Configuration
@@ -44,6 +46,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Initialize FrequencyCalculator
+        FrequencyCalculator.init(applicationContext)
+
         Configuration.getInstance().load(applicationContext, getSharedPreferences("osmdroid", MODE_PRIVATE))
         Configuration.getInstance().userAgentValue = "CellFire-VeteranOp/1.0"
 
@@ -55,6 +60,17 @@ class MainActivity : ComponentActivity() {
                     NavHost(navController = navController, startDestination = "start") {
                         composable("start") { StartScreen(navController) }
                         composable("scan") { ScanScreen(navController, vm) }
+                        composable(
+                            "detail/{pci}/{arfcn}",
+                            arguments = listOf(
+                                navArgument("pci") { type = NavType.IntType },
+                                navArgument("arfcn") { type = NavType.IntType },
+                            )
+                        ) { backStackEntry ->
+                            val pci = backStackEntry.arguments?.getInt("pci") ?: 0
+                            val arfcn = backStackEntry.arguments?.getInt("arfcn") ?: 0
+                            CellDetailScreen(vm, pci, arfcn)
+                        }
                         composable("map") { MapScreen(vm) }
                         composable("raw") { RawLogScreen(vm) }
                         composable("about") { AboutScreen() }
@@ -66,7 +82,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// START SCREEN
 @Composable
 fun StartScreen(navController: NavController) {
     Column(
@@ -95,41 +110,35 @@ fun StartScreen(navController: NavController) {
     }
 }
 
-// SCAN SCREEN — TACTICAL BATTLEFIELD WITH LTE/5G TOGGLE
 @Composable
 fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
     val context = LocalContext.current
     val state by vm.uiState.collectAsState()
+    val deepScanActive by vm.deepScanActive.collectAsState()
 
     val permissions = listOf(
         Manifest.permission.ACCESS_FINE_LOCATION,
         Manifest.permission.READ_PHONE_STATE
     )
 
-    val launcher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissionsResult ->
-        val allGranted = permissionsResult.values.all { it }
-        vm.onPermissionsGranted(allGranted)
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+        val granted = results.values.all { it }
+        vm.onPermissionsResult(granted)
+    }
+
+    LaunchedEffect(Unit) {
+        val allGranted = permissions.all {
+            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+        }
         if (allGranted) {
-            vm.startMonitoring()
+            vm.onPermissionsResult(true)
+        } else {
+            launcher.launch(permissions.toTypedArray())
         }
     }
 
     var showLte by remember { mutableStateOf(true) }
     var show5g by remember { mutableStateOf(true) }
-
-    LaunchedEffect(Unit) {
-        val allPermissionsGranted = permissions.all {
-            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-        }
-        if (allPermissionsGranted) {
-            vm.onPermissionsGranted(true)
-            vm.startMonitoring()
-        } else {
-            launcher.launch(permissions.toTypedArray())
-        }
-    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("CELLFIRE // VETERANOP", style = MaterialTheme.typography.headlineLarge, color = Color.White)
@@ -152,24 +161,36 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
 
         Spacer(Modifier.height(16.dp))
 
-        // LTE / 5G TOGGLE BUTTONS
+        // DEEP SCAN BUTTON — RED WHEN ACTIVE
+        ElevatedButton(
+            onClick = { vm.toggleDeepScan(!deepScanActive) },
+            colors = ButtonDefaults.elevatedButtonColors(
+                containerColor = if (deepScanActive) Color(0xFFFF2D00) else Color(0xFF444444)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = "DEEP SCAN: ${if (deepScanActive) "ACTIVE (5s)" else "OFF"}",
+                color = Color.White,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = { showLte = !showLte },
                 colors = ButtonDefaults.outlinedButtonColors(
                     containerColor = if (showLte) Color(0xFF00A8E8) else Color.Transparent
                 )
-            ) {
-                Text("LTE", color = if (showLte) Color.White else Color.LightGray)
-            }
+            ) { Text("LTE", color = if (showLte) Color.White else Color.LightGray) }
             OutlinedButton(
                 onClick = { show5g = !show5g },
                 colors = ButtonDefaults.outlinedButtonColors(
                     containerColor = if (show5g) Color(0xFFE20074) else Color.Transparent
                 )
-            ) {
-                Text("5G", color = if (show5g) Color.White else Color.LightGray)
-            }
+            ) { Text("5G", color = if (show5g) Color.White else Color.LightGray) }
         }
 
         Spacer(Modifier.height(16.dp))
@@ -196,35 +217,88 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                     "dish", "dish wireless" -> Color(0xFFFF6200).copy(alpha = 0.3f)
                     else -> Color.DarkGray.copy(alpha = 0.2f)
                 }
-
                 val fontWeight = if (cell.isRegistered) FontWeight.ExtraBold else FontWeight.Normal
 
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(backgroundColor)
-                        .clickable { navController.navigate("map") }
+                        .clickable { navController.navigate("detail/${cell.pci}/${cell.arfcn}") }
                         .padding(12.dp)
                 ) {
-                    Text(cell.carrier.uppercase(), Modifier.weight(1.6f), fontWeight = fontWeight, color = Color.White)
-                    Text(cell.band, Modifier.weight(0.8f), fontWeight = fontWeight, color = Color.White)
-                    Text(cell.pci.toString(), Modifier.weight(0.8f), fontWeight = fontWeight, color = Color.White)
+                    Text(text = cell.carrier.uppercase(), modifier = Modifier.weight(1.6f), fontWeight = fontWeight, color = Color.White)
+                    Text(text = cell.band, modifier = Modifier.weight(0.8f), fontWeight = fontWeight, color = Color.White)
+                    Text(text = cell.pci.toString(), modifier = Modifier.weight(0.8f), fontWeight = fontWeight, color = Color.White)
                     Text(
-                        cell.signalStrength.toString(),
-                        Modifier.weight(1f),
+                        text = cell.signalStrength.toString(),
+                        modifier = Modifier.weight(1f),
                         fontWeight = fontWeight,
                         color = if (cell.signalStrength > -80) Color.Green else if (cell.signalStrength > -100) Color.Yellow else Color.Red
                     )
-                    Text(cell.signalQuality.toString(), Modifier.weight(1f), fontWeight = fontWeight, color = Color.White)
+                    Text(text = cell.signalQuality.toString(), modifier = Modifier.weight(1f), fontWeight = fontWeight, color = Color.White)
                 }
             }
         }
 
-        Text("v1.0-veteranop • VeteranOp Industries", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
+        Text(text = "v1.0-veteranop • VeteranOp Industries", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
     }
 }
 
-// MAP SCREEN — YOUR LOCATION + BLUE DOT
+@Composable
+fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int) {
+    val state by vm.uiState.collectAsState()
+    val cell = state.cells.firstOrNull { it.pci == pci && it.arfcn == arfcn }
+
+    if (cell == null) {
+        // Handle the case where the cell is not found
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("Cell not found.", color = Color.White)
+        }
+        return
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        // Card with raw details
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Cell Details", style = MaterialTheme.typography.headlineSmall)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Carrier: ${cell.carrier}")
+                Text("PCI: ${cell.pci}")
+                Text("ARFCN: ${cell.arfcn}")
+                Text("Band: ${cell.band}")
+                Text("Type: ${cell.type}")
+                Text("RSRP: ${cell.signalStrength}")
+                Text("SINR: ${cell.signalQuality}")
+                Text("TAC: ${cell.tac}")
+                Text("Registered: ${cell.isRegistered}")
+                val freq = when (cell) {
+                    is LteCell -> FrequencyCalculator.getLteFrequency(cell.arfcn)
+                    is NrCell -> FrequencyCalculator.getNrFrequency(cell.arfcn)
+                    else -> null
+                }
+                if (freq != null) {
+                    Text("DL Freq: ${String.format("%.1f", freq.first)} MHz")
+                    Text("UL Freq: ${String.format("%.1f", freq.second)} MHz")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Placeholder for the chart
+        Card(modifier = Modifier.fillMaxWidth().height(200.dp)) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Chart will go here")
+            }
+        }
+    }
+}
+
 @Composable
 fun MapScreen(vm: CellFireViewModel) {
     Box(modifier = Modifier.fillMaxSize()) {
@@ -235,37 +309,20 @@ fun MapScreen(vm: CellFireViewModel) {
                     setMultiTouchControls(true)
                     setBuiltInZoomControls(true)
                     controller.setZoom(16.0)
-
                     val provider = GpsMyLocationProvider(ctx)
                     val myLocationOverlay = MyLocationNewOverlay(provider, this)
                     myLocationOverlay.enableMyLocation()
                     myLocationOverlay.enableFollowLocation()
-                    myLocationOverlay.runOnFirstFix {
-                        ctx.mainExecutor.execute {
-                            myLocationOverlay.myLocation?.let {
-                                controller.animateTo(it)
-                            }
-                        }
-                    }
                     overlays.add(myLocationOverlay)
                 }
             }
         )
-
-        FloatingActionButton(
-            onClick = { /* re-center */ },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
-        ) {
-            Text("↗", fontSize = MaterialTheme.typography.headlineMedium.fontSize)
-        }
     }
 }
 
-// RAW LOG SCREEN
 @Composable
 fun RawLogScreen(vm: CellFireViewModel) {
     val state by vm.uiState.collectAsState()
-
     LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         items(state.logLines) { line ->
             Text(text = line, style = MaterialTheme.typography.bodySmall)
@@ -273,8 +330,6 @@ fun RawLogScreen(vm: CellFireViewModel) {
     }
 }
 
-
-// SETTINGS SCREEN
 @Composable
 fun SettingsScreen() {
     val context = LocalContext.current
@@ -303,7 +358,6 @@ fun SettingsScreen() {
     }
 }
 
-// ABOUT SCREEN
 @Composable
 fun AboutScreen() {
     Column(
@@ -314,6 +368,6 @@ fun AboutScreen() {
         Text("CellFire", style = MaterialTheme.typography.headlineLarge)
         Text("v1.0-veteranop", style = MaterialTheme.typography.bodyLarge)
         Spacer(modifier = Modifier.height(16.dp))
-        Text("Made by VeteranOp Industries", style = MaterialTheme.typography.bodyMedium)
+        Text("Made by VeteranOp LLC", style = MaterialTheme.typography.bodyMedium)
     }
 }

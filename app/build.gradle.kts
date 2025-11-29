@@ -1,4 +1,3 @@
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -71,6 +70,9 @@ dependencies {
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
     implementation("com.google.dagger:hilt-android:2.51")
     kapt("com.google.dagger:hilt-android-compiler:2.51")
+
+    // Charting
+    implementation("com.github.PhilJay:MPAndroidChart:v3.1.0")
 
     // Permissions
 
