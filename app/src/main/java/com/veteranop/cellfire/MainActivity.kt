@@ -334,7 +334,7 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int) {
                             readOnly = true,
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                             modifier = Modifier.menuAnchor().fillMaxWidth(),
-                            colors = TextFieldDefaults.outlinedTextFieldColors(textColor = Color.White)
+                            colors = TextFieldDefaults.outlinedTextFieldColors(textColor = Color.White, focusedBorderColor = Color.White, unfocusedBorderColor = Color.LightGray)
                         )
                         ExposedDropdownMenu(
                             modifier = Modifier.background(Color.Gray)
