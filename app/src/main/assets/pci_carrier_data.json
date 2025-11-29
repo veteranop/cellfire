@@ -1,0 +1,38 @@
+{
+  "pciToCarrier": {
+    "0-35":   "T-Mobile LTE/5G (Primary low/mid-band pool)",
+    "36-71":  "T-Mobile LTE/5G (Secondary pool)",
+    "72-107": "T-Mobile LTE/5G (n41 / B41 expansion)",
+    "108-143":"T-Mobile LTE/5G (n71 / B71 low-band)",
+    "144-179":"T-Mobile LTE/5G (n25 / B25, n66 / B66)",
+    "180-215":"Verizon LTE/5G (Primary pool – B2/B5/B13/B66)",
+    "216-251":"Verizon LTE/5G (n77 C-Band, n48 CBRS)",
+    "252-287":"Verizon LTE/5G (n5 / B5 low-band)",
+    "288-323":"AT&T LTE/5G (Primary pool – B2/B5/B12/B66)",
+    "324-359":"AT&T LTE/5G (n77 C-Band, n5 low-band)",
+    "360-395":"FirstNet (Band 14 public-safety)",
+    "396-431":"Dish Wireless 5G (n71, n29, n70)",
+    "432-467":"US Cellular LTE/5G (B5/B12/B71)",
+    "468-503":"T-Mobile / Verizon / AT&T overlap or testing (rarely seen in wild)"
+  },
+
+  "notes": [
+    "PCI ranges are reused per band — a PCI 100 can be T-Mobile n41 in one market and Verizon n77 in another.",
+    "Most accurate identification = PCI + ARFCN/EARFCN/NR-ARFCN together.",
+    "T-Mobile aggressively re-uses 0–107 across all bands.",
+    "Verizon 180–251 is extremely consistent nationwide.",
+    "FirstNet 360–395 is nationwide exclusive (Band 14 only).",
+    "Dish 396–431 is currently the only way to spot Dish towers without ARFCN."
+  ],
+
+  "quickLookupTable": {
+    "0-107":   "Almost certainly T-Mobile",
+    "108-179": "T-Mobile (usually low-band n71/B71)",
+    "180-251": "Almost certainly Verizon",
+    "252-287": "Verizon low-band (B5)",
+    "288-359": "Almost certainly AT&T",
+    "360-395": "FirstNet (Band 14) — 100% unique",
+    "396-431": "Dish Wireless — 100% unique",
+    "432-467": "US Cellular"
+  }
+}

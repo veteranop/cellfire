@@ -2,6 +2,7 @@ package com.veteranop.cellfire
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -11,17 +12,18 @@ import javax.inject.Singleton
  */
 @Singleton
 class CellRepository @Inject constructor() {
-    private val _cells = MutableStateFlow<List<Cell>>(emptyList())
-    val cells = _cells.asStateFlow()
-
-    private val _isServiceActive = MutableStateFlow(false)
-    val isServiceActive = _isServiceActive.asStateFlow()
+    private val _uiState = MutableStateFlow(CellFireUiState())
+    val uiState = _uiState.asStateFlow()
 
     fun updateCells(newCells: List<Cell>) {
-        _cells.value = newCells
+        _uiState.update { it.copy(cells = newCells) }
     }
 
     fun setServiceActive(isActive: Boolean) {
-        _isServiceActive.value = isActive
+        _uiState.update { it.copy(isMonitoring = isActive) }
+    }
+
+    fun setPermissionsGranted(areGranted: Boolean) {
+        _uiState.update { it.copy(allPermissionsGranted = areGranted) }
     }
 }

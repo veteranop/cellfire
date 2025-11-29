@@ -12,9 +12,7 @@ import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -23,11 +21,14 @@ class CellScanService : LifecycleService() {
     @Inject lateinit var cellRepository: CellRepository
 
     private val telephonyManager by lazy { getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager }
-    private var scanningJob: Job? = null
+    private var regularJob: Job? = null
+    private var deepScanJob: Job? = null
+    private var currentScan: NetworkScan? = null
 
     companion object {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
+        const val ACTION_TOGGLE_DEEP = "ACTION_TOGGLE_DEEP"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "cellfire_scan"
     }
@@ -35,161 +36,277 @@ class CellScanService : LifecycleService() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, createNotification())
+        startForeground(NOTIFICATION_ID, createNotification("CellFire Active"))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        super.onStartCommand(intent, flags, startId)
         when (intent?.action) {
             ACTION_START -> startScanning()
             ACTION_STOP -> stopScanning()
+            ACTION_TOGGLE_DEEP -> {
+                val enable = intent.getBooleanExtra("enable", true)
+                if (enable) startDeepScan() else stopDeepScan()
+            }
         }
         return START_STICKY
     }
 
     private fun startScanning() {
-        if (scanningJob?.isActive == true) return
-
+        if (regularJob?.isActive == true) return
         cellRepository.setServiceActive(true)
 
-        scanningJob = lifecycleScope.launch {
-            while (true) {
-                updateCellInfo()
+        regularJob = lifecycleScope.launch {
+            while (isActive) {
+                updateFromAllCellInfo()
                 delay(1800)
             }
         }
+
+        // Deep scan ON by default — this is what you want in the field
+        startDeepScan()
+    }
+
+    private fun startDeepScan() {
+        if (deepScanJob?.isActive == true) return
+        deepScanJob = lifecycleScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                performDeepScan()
+                delay(5000L) // ← Forces full neighbor scan every 5 seconds
+            }
+        }
+        updateNotification("Deep Scan ACTIVE – 5s")
+    }
+
+    private fun stopDeepScan() {
+        deepScanJob?.cancel()
+        currentScan?.stopScan()
+        currentScan = null
+        updateNotification("CellFire Active")
     }
 
     private fun stopScanning() {
-        scanningJob?.cancel()
+        regularJob?.cancel()
+        stopDeepScan()
         cellRepository.setServiceActive(false)
         stopForeground(true)
         stopSelf()
     }
 
     @SuppressLint("MissingPermission")
-    private fun updateCellInfo() {
-        val cellInfoList = telephonyManager.allCellInfo ?: return
-        val newCells = cellInfoList.mapNotNull { parseCellInfo(it) }
+    private fun performDeepScan() {
+        currentScan?.stopScan()
+        if (Build.VERSION.SDK_INT < 28) {
+            updateFromAllCellInfo()
+            return
+        }
 
-        cellRepository.updateCells(newCells)
+        val specifiers = arrayOf(
+            RadioAccessSpecifier(AccessNetworkConstants.AccessNetworkType.EUTRAN, null, null),
+            RadioAccessSpecifier(AccessNetworkConstants.AccessNetworkType.NGRAN, null, null)
+        )
+
+        val request = NetworkScanRequest(
+            NetworkScanRequest.SCAN_TYPE_ONE_SHOT,
+            specifiers,
+            45, 0, false, 1, null
+        )
+
+        try {
+            currentScan = telephonyManager.requestNetworkScan(request, mainExecutor, object : TelephonyScanManager.NetworkScanCallback() {
+                override fun onResults(results: MutableList<CellInfo>?) {
+                    results?.takeIf { it.isNotEmpty() }?.let { list ->
+                        val cells = list.mapNotNull { parseCellInfo(it) }
+                        cellRepository.updateCells(cells)
+                        updateNotification("Deep Scan: ${cells.size} towers")
+                    }
+                }
+
+                override fun onComplete() {}
+                override fun onError(error: Int) { updateFromAllCellInfo() }
+            })
+        } catch (e: Exception) {
+            updateFromAllCellInfo()
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun updateFromAllCellInfo() {
+        val list = telephonyManager.allCellInfo ?: return
+        val cells = list.mapNotNull { parseCellInfo(it) }
+        cellRepository.updateCells(cells)
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "CellFire Scanning",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply { description = "Scanning for cell towers" }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            val channel = NotificationChannel(CHANNEL_ID, "CellFire Scanning", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 
-    private fun createNotification(): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+    private fun createNotification(text: String): Notification =
+        NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("CellFire Active")
-            .setContentText("Scanning towers...")
+            .setContentText(text)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setOngoing(true)
+            .setSilent(true)
             .build()
+
+    private fun updateNotification(text: String) {
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(NOTIFICATION_ID, createNotification(text))
     }
 
+    // --- IMPLEMENTED PARSING LOGIC ---
     @SuppressLint("MissingPermission")
     private fun parseCellInfo(info: CellInfo): Cell? {
         return when (info) {
             is CellInfoLte -> {
-                val id = info.cellIdentity
-                val sig = info.cellSignalStrength
+                val identity = info.cellIdentity
+                val strength = info.cellSignalStrength
 
-                val mcc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) id.mccString?.toIntOrNull() ?: 0 else id.mcc.takeIf { it != Int.MAX_VALUE } ?: 0
-                val mnc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) id.mncString?.toIntOrNull() ?: 0 else id.mnc.takeIf { it != Int.MAX_VALUE } ?: 0
+                val mcc: Int?
+                val mnc: Int?
 
-                val rsrp = sig.rsrp.coerceIn(-140, -44)
-                val rssnr = if (sig.rssnr != Int.MAX_VALUE) sig.rssnr / 10 else 0
-                val band = earfcnToLteBand(id.earfcn)
-                val carrier = plmnToCarrier(mcc, mnc)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    mcc = identity.mccString?.toIntOrNull()
+                    mnc = identity.mncString?.toIntOrNull()
+                } else {
+                    @Suppress("DEPRECATION")
+                    mcc = identity.mcc
+                    @Suppress("DEPRECATION")
+                    mnc = identity.mnc
+                }
+
+                var carrier = if (mcc != null && mnc != null && mcc != Int.MAX_VALUE && mnc != Int.MAX_VALUE) {
+                    plmnToCarrier(mcc, mnc)
+                } else {
+                    "Unknown"
+                }
+
+                val pci = if (identity.pci == Int.MAX_VALUE) 0 else identity.pci
+                if (carrier == "Unknown") {
+                    carrier = pciToCarrier(pci)
+                }
 
                 LteCell(
-                    pci = id.pci,
-                    arfcn = id.earfcn,
-                    band = band,
-                    signalStrength = rsrp,
-                    signalQuality = rssnr,
+                    pci = pci,
+                    arfcn = identity.earfcn,
+                    band = earfcnToLteBand(identity.earfcn),
+                    signalStrength = strength.rsrp,
+                    signalQuality = strength.rsrq,
                     isRegistered = info.isRegistered,
                     carrier = carrier,
-                    tac = id.tac
+                    tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac
                 )
             }
-            is CellInfoNr -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val id = info.cellIdentity as CellIdentityNr
-                val sig = info.cellSignalStrength as CellSignalStrengthNr
+            is CellInfoNr -> {
+                val identity = info.cellIdentity as? CellIdentityNr ?: return null
+                val strength = info.cellSignalStrength as? CellSignalStrengthNr ?: return null
 
-                val mcc = id.mccString?.toIntOrNull() ?: 0
-                val mnc = id.mncString?.toIntOrNull() ?: 0
+                val mcc = identity.mccString?.toIntOrNull()
+                val mnc = identity.mncString?.toIntOrNull()
 
-                val rsrp = sig.ssRsrp.coerceIn(-140, -44)
-                val sinr = if (sig.ssSinr != Int.MAX_VALUE) sig.ssSinr / 10 else 0
-                val band = nrarfcnToNrBand(id.nrarfcn)
-                val carrier = plmnToCarrier(mcc, mnc)
+                var carrier = if (mcc != null && mnc != null && mcc != Int.MAX_VALUE && mnc != Int.MAX_VALUE) {
+                    plmnToCarrier(mcc, mnc)
+                } else {
+                    "Unknown"
+                }
+
+                val pci = if (identity.pci == Int.MAX_VALUE) 0 else identity.pci
+                if (carrier == "Unknown") {
+                    carrier = pciToCarrier(pci)
+                }
 
                 NrCell(
-                    pci = id.pci,
-                    arfcn = id.nrarfcn,
-                    band = band,
-                    signalStrength = rsrp,
-                    signalQuality = sinr,
+                    pci = pci,
+                    arfcn = identity.nrarfcn,
+                    band = nrarfcnToNrBand(identity.nrarfcn),
+                    signalStrength = strength.csiRsrp,
+                    signalQuality = strength.csiRsrq,
                     isRegistered = info.isRegistered,
                     carrier = carrier,
-                    tac = id.tac
+                    tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac
                 )
-            } else null
+            }
             else -> null
         }
     }
 
-    private fun plmnToCarrier(mcc: Int, mnc: Int): String {
-        val plmn = String.format("%03d%02d", mcc, mnc)
-        return when (plmn) {
-            in listOf("310260", "310210", "310220", "310230", "310240", "310250", "310270", "310660", "310200", "310160", "310310") -> "T-Mobile"
-            in listOf("310004", "310012", "311480", "311110") -> "Verizon"
-            in listOf("310410", "310150", "310170", "310280", "310380", "310560", "311870") -> "AT&T"
-            "313100" -> "FirstNet"
-            "312670" -> "Dish Wireless"
-            "310030", "311220" -> "US Cellular"
-            else -> "Carrier $plmn"
+    private fun pciToCarrier(pci: Int): String {
+        return when (pci) {
+            in 0..107   -> "T-Mobile"
+            in 108..179 -> "T-Mobile (low-band)"
+            in 180..251 -> "Verizon"
+            in 252..287 -> "Verizon (B5)"
+            in 288..359 -> "AT&T"
+            in 360..395 -> "FirstNet"
+            in 396..431 -> "Dish Wireless"
+            in 432..467 -> "US Cellular"
+            else        -> "Unknown / Other"
         }
     }
 
-    private fun earfcnToLteBand(earfcn: Int): String = when (earfcn) {
-        in 0..599 -> "B1"
-        in 600..1199 -> "B2"
-        in 1200..1949 -> "B3"
-        in 1950..2399 -> "B4"
-        in 2400..2649 -> "B5"
-        in 2650..3449 -> "B7"
-        in 3800..4149 -> "B12"
-        in 4150..4749 -> "B13"
-        in 4750..4949 -> "B14"
-        in 5730..5849 -> "B20"
-        in 5850..5999 -> "B25"
-        in 6000..6149 -> "B26"
-        in 6150..6449 -> "B28"
-        in 8690..9039 -> "B41"
-        in 9210..9659 -> "B66"
-        in 9660..9769 -> "B71"
-        else -> "B??"
+    private fun plmnToCarrier(mcc: Int, mnc: Int): String {
+        return when (mcc) {
+            310 -> when (mnc) {
+                200, 210, 220, 230, 240, 250, 260 -> "T-Mobile"
+                410 -> "AT&T"
+                else -> "T-Mobile/AT&T Roaming"
+            }
+            311 -> when (mnc) {
+                480, 481, 482, 483, 484, 485, 486, 487, 488, 489 -> "Verizon"
+                else -> "Verizon Roaming"
+            }
+            313 -> when (mnc) {
+                340 -> "Dish Wireless"
+                100 -> "FirstNet (AT&T)"
+                else -> "AT&T Roaming"
+            }
+            else -> "Unknown"
+        }
     }
 
-    private fun nrarfcnToNrBand(nrarfcn: Int): String = when (nrarfcn) {
-        in 123400..151600 -> "n71"
-        in 499200..537999 -> "n71"
-        in 514998..573332 -> "n41"
-        in 620000..653333 -> "n77/n78"
-        in 653334..693333 -> "n78"
-        in 693334..733333 -> "n78"
-        in 342000..356000 -> "n66"
-        else -> "n??"
+    private fun earfcnToLteBand(earfcn: Int): String {
+        return when (earfcn) {
+            in 0..599 -> "B1"
+            in 600..1199 -> "B2"
+            in 1200..1949 -> "B3"
+            in 1950..2399 -> "B4"
+            in 2400..2649 -> "B5"
+            in 4800..5009 -> "B10"
+            in 5010..5179 -> "B12"
+            in 5180..5279 -> "B13"
+            in 5280..5379 -> "B14"
+            in 5730..5849 -> "B17"
+            in 6150..6449 -> "B20"
+            in 8040..8689 -> "B25"
+            in 8690..9039 -> "B26"
+            in 9210..9659 -> "B28"
+            in 9920..10359 -> "B30"
+            in 37750..38249 -> "B38"
+            in 38650..39649 -> "B40"
+            in 39650..41589 -> "B41"
+            in 65536..66435 -> "B65"
+            in 66436..67335 -> "B66"
+            in 68586..68935 -> "B71"
+            else -> "B??"
+        }
+    }
+
+    private fun nrarfcnToNrBand(nrarfcn: Int): String {
+        return when (nrarfcn) {
+            in 620000..636666 -> "n77"
+            in 636667..646666 -> "n78"
+            in 509202..537999 -> "n41"
+            in 122400..131400 -> "n71"
+            in 2289252..2308333 -> "n260"
+            in 2269584..2289251 -> "n261"
+            in 418000..434000 -> "n25"
+            in 384000..404000 -> "n66"
+            in 370000..384000 -> "n2"
+            in 173800..178000 -> "n5"
+            else -> "n??"
+        }
     }
 }
