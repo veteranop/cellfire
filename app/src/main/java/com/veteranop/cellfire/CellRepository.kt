@@ -1,22 +1,37 @@
 package com.veteranop.cellfire
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * A singleton class to hold the application's cell data and service status.
- * This allows the data to be shared safely between the UI (ViewModels) and background services.
- */
 @Singleton
-class CellRepository @Inject constructor() {
+class CellRepository @Inject constructor(
+    private val discoveredPciDao: DiscoveredPciDao
+) {
     private val _uiState = MutableStateFlow(CellFireUiState())
     val uiState = _uiState.asStateFlow()
 
+    private val repositoryScope = CoroutineScope(Dispatchers.IO)
+
+    init {
+        repositoryScope.launch {
+            discoveredPciDao.getAll().collect { discoveredPcis ->
+                _uiState.update { it.copy(discoveredPcis = discoveredPcis) }
+            }
+        }
+    }
+
     fun updateCells(newCells: List<Cell>) {
         _uiState.update { it.copy(cells = newCells) }
+        addSignalHistory(newCells)
+        repositoryScope.launch {
+            updateDiscoveredPcis(newCells)
+        }
     }
 
     fun setServiceActive(isActive: Boolean) {
@@ -25,5 +40,76 @@ class CellRepository @Inject constructor() {
 
     fun setPermissionsGranted(areGranted: Boolean) {
         _uiState.update { it.copy(allPermissionsGranted = areGranted) }
+    }
+
+    fun addLogLine(logLine: String) {
+        _uiState.update { it.copy(logLines = (listOf(logLine) + it.logLines).take(200)) }
+    }
+
+    fun updateCarrierForPci(pci: Int, arfcn: Int, newCarrier: String) {
+        _uiState.update { currentState ->
+            val newCells = currentState.cells.map { cell ->
+                if (cell.pci == pci && cell.arfcn == arfcn) {
+                    cell.carrier = newCarrier
+                }
+                cell
+            }
+            currentState.copy(cells = newCells)
+        }
+        repositoryScope.launch {
+            val discovered = discoveredPciDao.getPci(pci)
+            if (discovered != null) {
+                discovered.carrier = newCarrier
+                discoveredPciDao.insert(discovered)
+            }
+        }
+    }
+
+    fun updatePciFlags(pci: Int, isIgnored: Boolean? = null, isTargeted: Boolean? = null) {
+        repositoryScope.launch {
+            val discovered = discoveredPciDao.getPci(pci)
+            if (discovered != null) {
+                isIgnored?.let { discovered.isIgnored = it }
+                isTargeted?.let { discovered.isTargeted = it }
+                discoveredPciDao.insert(discovered)
+            }
+        }
+    }
+
+    private suspend fun updateDiscoveredPcis(cells: List<Cell>) {
+        val now = System.currentTimeMillis()
+        for (cell in cells) {
+            val existingPci = discoveredPciDao.getPci(cell.pci)
+            if (existingPci != null) {
+                existingPci.discoveryCount++
+                existingPci.lastSeen = now
+                discoveredPciDao.insert(existingPci)
+            } else {
+                discoveredPciDao.insert(
+                    DiscoveredPci(
+                        pci = cell.pci,
+                        carrier = cell.carrier,
+                        discoveryCount = 1,
+                        lastSeen = now
+                    )
+                )
+            }
+        }
+    }
+
+    private fun addSignalHistory(cells: List<Cell>) {
+        val now = System.currentTimeMillis()
+        _uiState.update { currentState ->
+            val newHistory = currentState.signalHistory.toMutableMap()
+
+            for (cell in cells) {
+                val key = Pair(cell.pci, cell.arfcn)
+                val history = newHistory.getOrDefault(key, emptyList()).toMutableList()
+                history.add(SignalHistoryPoint(now, cell.signalStrength, cell.signalQuality))
+
+                newHistory[key] = history.takeLast(100)
+            }
+            currentState.copy(signalHistory = newHistory)
+        }
     }
 }

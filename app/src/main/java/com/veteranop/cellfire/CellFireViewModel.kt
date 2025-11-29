@@ -2,6 +2,7 @@ package com.veteranop.cellfire
 
 import android.app.Application
 import android.content.Intent
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -9,18 +10,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 
-// We use your existing CellFireUiState from DataModels.kt — NO redeclaration
-// We just add deepScanActive as a separate state holder
 @HiltViewModel
 class CellFireViewModel @Inject constructor(
     private val application: Application,
     private val cellRepository: CellRepository
 ) : ViewModel() {
 
-    // Keep your original uiState from the repository
     val uiState: StateFlow<CellFireUiState> = cellRepository.uiState
 
-    // Add only the deep scan toggle state
     private val _deepScanActive = MutableStateFlow(true)
     val deepScanActive: StateFlow<Boolean> = _deepScanActive.asStateFlow()
 
@@ -35,14 +32,14 @@ class CellFireViewModel @Inject constructor(
         val intent = Intent(application, CellScanService::class.java).apply {
             action = CellScanService.ACTION_START
         }
-        application.startForegroundService(intent)
+        ContextCompat.startForegroundService(application, intent)
     }
 
     fun toggleMonitoring() {
         val intent = Intent(application, CellScanService::class.java).apply {
             action = if (uiState.value.isMonitoring) CellScanService.ACTION_STOP else CellScanService.ACTION_START
         }
-        application.startForegroundService(intent)
+        ContextCompat.startForegroundService(application, intent)
     }
 
     fun toggleDeepScan(enable: Boolean) {
@@ -50,7 +47,15 @@ class CellFireViewModel @Inject constructor(
             action = CellScanService.ACTION_TOGGLE_DEEP
             putExtra("enable", enable)
         }
-        application.startForegroundService(intent)
+        ContextCompat.startForegroundService(application, intent)
         _deepScanActive.value = enable
+    }
+
+    fun updateCarrier(pci: Int, arfcn: Int, newCarrier: String) {
+        cellRepository.updateCarrierForPci(pci, arfcn, newCarrier)
+    }
+
+    fun updatePci(pci: Int, isIgnored: Boolean? = null, isTargeted: Boolean? = null) {
+        cellRepository.updatePciFlags(pci, isIgnored, isTargeted)
     }
 }
