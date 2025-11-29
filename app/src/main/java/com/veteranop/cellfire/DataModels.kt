@@ -4,10 +4,6 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
 
-// ==================================================
-// DATA MODELS
-// ==================================================
-
 @Serializable
 data class BandInfo(
     val dl: String,
@@ -17,9 +13,14 @@ data class BandInfo(
 )
 
 @Serializable
+data class BandsHolder(
+    val bands: Map<String, BandInfo>
+)
+
+@Serializable
 data class BandData(
-    val lte: Map<String, BandInfo>,
-    val nr: Map<String, BandInfo>
+    val lte: BandsHolder,
+    val nr: BandsHolder
 )
 
 sealed class Cell {

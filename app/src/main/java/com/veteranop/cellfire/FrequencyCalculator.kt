@@ -13,8 +13,8 @@ object FrequencyCalculator {
         val json = Json { ignoreUnknownKeys = true }
         val earfcnJson = context.assets.open("earfcn_frequencies.json").bufferedReader().use { it.readText() }
         val bandData: BandData = json.decodeFromString(earfcnJson)
-        lteBands = bandData.lte
-        nrBands = bandData.nr
+        lteBands = bandData.lte.bands
+        nrBands = bandData.nr.bands
     }
 
     fun getLteFrequency(earfcn: Int): Pair<Double, Double>? {
