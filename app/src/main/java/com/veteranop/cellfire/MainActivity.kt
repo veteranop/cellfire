@@ -3,6 +3,7 @@ package com.veteranop.cellfire
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -13,6 +14,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,6 +34,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.github.mikephil.charting.charts.LineChart
+import com.github.mikephil.charting.components.XAxis
+import com.github.mikephil.charting.data.Entry
+import com.github.mikephil.charting.data.LineData
+import com.github.mikephil.charting.data.LineDataSet
 import com.veteranop.cellfire.ui.theme.CellFireTheme
 import dagger.hilt.android.AndroidEntryPoint
 import org.osmdroid.config.Configuration
@@ -37,6 +46,9 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 const val PREFS_NAME = "CellFirePrefs"
 const val API_KEY_NAME = "opencellid_api_key"
@@ -46,7 +58,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Initialize FrequencyCalculator
         FrequencyCalculator.init(applicationContext)
 
         Configuration.getInstance().load(applicationContext, getSharedPreferences("osmdroid", MODE_PRIVATE))
@@ -75,6 +86,7 @@ class MainActivity : ComponentActivity() {
                         composable("raw") { RawLogScreen(vm) }
                         composable("about") { AboutScreen() }
                         composable("settings") { SettingsScreen() }
+                        composable("pci_table") { PciTableScreen(vm) }
                     }
                 }
             }
@@ -89,8 +101,8 @@ fun StartScreen(navController: NavController) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("CellFire", style = MaterialTheme.typography.headlineLarge)
-        Text("v1.0-veteranop", style = MaterialTheme.typography.bodyLarge)
+        Text("CellFire", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Text("v1.0-veteranop", style = MaterialTheme.typography.bodyLarge, color = Color.White)
         Spacer(modifier = Modifier.height(32.dp))
         Button(onClick = { navController.navigate("scan") }, modifier = Modifier.fillMaxWidth()) {
             Text("Start Scan")
@@ -98,6 +110,10 @@ fun StartScreen(navController: NavController) {
         Spacer(modifier = Modifier.height(8.dp))
         Button(onClick = { navController.navigate("raw") }, modifier = Modifier.fillMaxWidth()) {
             Text("Raw Phone Output")
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(onClick = { navController.navigate("pci_table") }, modifier = Modifier.fillMaxWidth()) {
+            Text("Discovered PCIs")
         }
         Spacer(modifier = Modifier.height(8.dp))
         Button(onClick = { navController.navigate("settings") }, modifier = Modifier.fillMaxWidth()) {
@@ -116,10 +132,7 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
     val state by vm.uiState.collectAsState()
     val deepScanActive by vm.deepScanActive.collectAsState()
 
-    val permissions = listOf(
-        Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.READ_PHONE_STATE
-    )
+    val permissions = listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.READ_PHONE_STATE)
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
         val granted = results.values.all { it }
@@ -161,7 +174,6 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
 
         Spacer(Modifier.height(16.dp))
 
-        // DEEP SCAN BUTTON — RED WHEN ACTIVE
         ElevatedButton(
             onClick = { vm.toggleDeepScan(!deepScanActive) },
             colors = ButtonDefaults.elevatedButtonColors(
@@ -181,15 +193,11 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = { showLte = !showLte },
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = if (showLte) Color(0xFF00A8E8) else Color.Transparent
-                )
+                colors = ButtonDefaults.outlinedButtonColors(containerColor = if (showLte) Color(0xFF00A8E8) else Color.Transparent)
             ) { Text("LTE", color = if (showLte) Color.White else Color.LightGray) }
             OutlinedButton(
                 onClick = { show5g = !show5g },
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = if (show5g) Color(0xFFE20074) else Color.Transparent
-                )
+                colors = ButtonDefaults.outlinedButtonColors(containerColor = if (show5g) Color(0xFFE20074) else Color.Transparent)
             ) { Text("5G", color = if (show5g) Color.White else Color.LightGray) }
         }
 
@@ -204,38 +212,40 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
         }
 
         val filteredCells = state.cells.filter {
-            (it.type == "LTE" && showLte) || (it.type == "5G NR" && show5g)
+            val discoveredPci = state.discoveredPcis.find { pci -> pci.pci == it.pci }
+            val isIgnored = discoveredPci?.isIgnored ?: false
+            !isIgnored && ((it.type == "LTE" && showLte) || (it.type == "5G NR" && show5g))
         }
 
         LazyColumn(modifier = Modifier.weight(1f)) {
-            items(filteredCells) { cell ->
-                val backgroundColor = when (cell.carrier.lowercase()) {
-                    "t-mobile", "t mobile" -> Color(0xFFE20074).copy(alpha = 0.3f)
-                    "verizon" -> Color(0xFFCC0000).copy(alpha = 0.3f)
-                    "at&t", "att" -> Color(0xFF00A8E8).copy(alpha = 0.3f)
-                    "firstnet" -> Color.Black.copy(alpha = 0.5f)
-                    "dish", "dish wireless" -> Color(0xFFFF6200).copy(alpha = 0.3f)
-                    else -> Color.DarkGray.copy(alpha = 0.2f)
+            items(filteredCells, key = { "${it.pci}-${it.arfcn}" }) { cell ->
+                val discoveredPci = state.discoveredPcis.find { it.pci == cell.pci }
+                val cellColor = when (cell.carrier.lowercase()) {
+                    "t-mobile", "t-mobile (low-band)" -> Color(0xFFE20074)
+                    "verizon", "verizon (b5)" -> Color(0xFFCC0000)
+                    "at&t" -> Color(0xFF00A8E8)
+                    "firstnet" -> Color.Black
+                    "dish wireless" -> Color(0xFFFF6200)
+                    else -> Color.DarkGray
                 }
-                val fontWeight = if (cell.isRegistered) FontWeight.ExtraBold else FontWeight.Normal
+                val finalColor = if(discoveredPci?.isTargeted == true) Color.Cyan else cellColor
 
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(backgroundColor)
+                        .background(finalColor.copy(alpha = 0.4f))
                         .clickable { navController.navigate("detail/${cell.pci}/${cell.arfcn}") }
                         .padding(12.dp)
                 ) {
-                    Text(text = cell.carrier.uppercase(), modifier = Modifier.weight(1.6f), fontWeight = fontWeight, color = Color.White)
-                    Text(text = cell.band, modifier = Modifier.weight(0.8f), fontWeight = fontWeight, color = Color.White)
-                    Text(text = cell.pci.toString(), modifier = Modifier.weight(0.8f), fontWeight = fontWeight, color = Color.White)
+                    Text(text = cell.carrier.uppercase(), modifier = Modifier.weight(1.6f), fontWeight = if (cell.isRegistered) FontWeight.ExtraBold else FontWeight.Normal, color = Color.White)
+                    Text(text = cell.band, modifier = Modifier.weight(0.8f), color = Color.White)
+                    Text(text = cell.pci.toString(), modifier = Modifier.weight(0.8f), color = Color.White)
                     Text(
                         text = cell.signalStrength.toString(),
                         modifier = Modifier.weight(1f),
-                        fontWeight = fontWeight,
-                        color = if (cell.signalStrength > -80) Color.Green else if (cell.signalStrength > -100) Color.Yellow else Color.Red
+                        color = if (cell.signalStrength > -85) Color.Green else if (cell.signalStrength > -100) Color.Yellow else Color.Red
                     )
-                    Text(text = cell.signalQuality.toString(), modifier = Modifier.weight(1f), fontWeight = fontWeight, color = Color.White)
+                    Text(text = cell.signalQuality.toString(), modifier = Modifier.weight(1f), color = Color.White)
                 }
             }
         }
@@ -244,58 +254,192 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int) {
     val state by vm.uiState.collectAsState()
-    val cell = state.cells.firstOrNull { it.pci == pci && it.arfcn == arfcn }
+    val cell by remember(state.cells, pci, arfcn) { derivedStateOf { state.cells.firstOrNull { it.pci == pci && it.arfcn == arfcn } } }
+    val history by remember(state.signalHistory, pci, arfcn) { derivedStateOf { state.signalHistory[Pair(pci, arfcn)] ?: emptyList() } }
+    var showDialog by remember { mutableStateOf(false) }
 
-    if (cell == null) {
-        // Handle the case where the cell is not found
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("Cell not found.", color = Color.White)
+    val currentCell = cell
+    if (currentCell == null) {
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black).padding(16.dp), contentAlignment = Alignment.Center) {
+            Text("Cell not found. Waiting for data...", color = Color.White, style = MaterialTheme.typography.bodyLarge)
         }
         return
     }
 
+    var selectedCarrier by remember(currentCell) { mutableStateOf(currentCell.carrier) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .background(Color.Black)
             .padding(16.dp)
     ) {
-        // Card with raw details
-        Card(modifier = Modifier.fillMaxWidth()) {
+        Card(colors = CardDefaults.cardColors(containerColor = Color.DarkGray)) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text("Cell Details", style = MaterialTheme.typography.headlineSmall)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Carrier: ${cell.carrier}")
-                Text("PCI: ${cell.pci}")
-                Text("ARFCN: ${cell.arfcn}")
-                Text("Band: ${cell.band}")
-                Text("Type: ${cell.type}")
-                Text("RSRP: ${cell.signalStrength}")
-                Text("SINR: ${cell.signalQuality}")
-                Text("TAC: ${cell.tac}")
-                Text("Registered: ${cell.isRegistered}")
-                val freq = when (cell) {
-                    is LteCell -> FrequencyCalculator.getLteFrequency(cell.arfcn)
-                    is NrCell -> FrequencyCalculator.getNrFrequency(cell.arfcn)
-                    else -> null
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Cell Details", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f), color = Color.White)
+                    Button(onClick = { showDialog = true }) {
+                        Text("Edit")
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Carrier: ${currentCell.carrier}", color = Color.White)
+                Text("PCI: ${currentCell.pci}", color = Color.White)
+                Text("ARFCN: ${currentCell.arfcn}", color = Color.White)
+                Text("Band: ${currentCell.band}", color = Color.White)
+                Text("Type: ${currentCell.type}", color = Color.White)
+                Text("RSRP: ${currentCell.signalStrength}", color = Color.White)
+                Text("SINR: ${currentCell.signalQuality}", color = Color.White)
+                Text("TAC: ${currentCell.tac}", color = Color.White)
+                Text("Registered: ${currentCell.isRegistered}", color = Color.White)
+                val freq = when (currentCell) {
+                    is LteCell -> FrequencyCalculator.getLteFrequency(currentCell.arfcn)
+                    is NrCell -> FrequencyCalculator.getNrFrequency(currentCell.arfcn)
                 }
                 if (freq != null) {
-                    Text("DL Freq: ${String.format("%.1f", freq.first)} MHz")
-                    Text("UL Freq: ${String.format("%.1f", freq.second)} MHz")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("DL Freq: ${String.format("%.1f", freq.first)} MHz", color = Color.White)
+                    Text("UL Freq: ${String.format("%.1f", freq.second)} MHz", color = Color.White)
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Placeholder for the chart
-        Card(modifier = Modifier.fillMaxWidth().height(200.dp)) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Chart will go here")
+        SignalChart(history = history)
+    }
+
+    if (showDialog) {
+        AlertDialog(
+            containerColor = Color.DarkGray,
+            onDismissRequest = { showDialog = false },
+            title = { Text("Edit PCI ${pci}", color = Color.White) },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    var expanded by remember { mutableStateOf(false) }
+                    Text("Change Carrier:", color = Color.White)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    ExposedDropdownMenuBox(
+                        expanded = expanded,
+                        onExpandedChange = { expanded = !expanded },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        OutlinedTextField(
+                            value = selectedCarrier,
+                            onValueChange = {},
+                            readOnly = true,
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                            modifier = Modifier.menuAnchor().fillMaxWidth(),
+                            colors = TextFieldDefaults.outlinedTextFieldColors(textColor = Color.White)
+                        )
+                        ExposedDropdownMenu(
+                            modifier = Modifier.background(Color.Gray)
+                        ) {
+                            state.selectedCarriers.forEach { carrier ->
+                                DropdownMenuItem(
+                                    text = { Text(carrier, color = Color.White) },
+                                    onClick = {
+                                        selectedCarrier = carrier
+                                        expanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Text("Other Actions:", color = Color.White)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(onClick = { 
+                            vm.updatePci(pci, isIgnored = true)
+                            showDialog = false 
+                        }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF600000))) { Text("Ignore") }
+                        
+                        val isTargeted = state.discoveredPcis.find { it.pci == pci }?.isTargeted == true
+                        Button(onClick = { 
+                            vm.updatePci(pci, isTargeted = !isTargeted)
+                            showDialog = false
+                        }, modifier = Modifier.weight(1f)) { Text(if (isTargeted) "Untarget" else "Target") }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        vm.updateCarrier(pci, arfcn, selectedCarrier)
+                        showDialog = false
+                    }
+                ) {
+                    Text("Save Carrier")
+                }
+            },
+            dismissButton = {
+                Button(onClick = { showDialog = false }, colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)) {
+                    Text("Cancel")
+                }
             }
-        }
+        )
+    }
+}
+
+@Composable
+fun SignalChart(history: List<SignalHistoryPoint>) {
+    Card(modifier = Modifier.fillMaxWidth().height(250.dp), colors = CardDefaults.cardColors(containerColor = Color.DarkGray)) {
+        AndroidView(
+            factory = { context ->
+                LineChart(context).apply {
+                    description.isEnabled = false
+                    xAxis.position = XAxis.XAxisPosition.BOTTOM
+                    xAxis.textColor = AndroidColor.WHITE
+                    xAxis.setDrawGridLines(false)
+                    xAxis.setDrawAxisLine(true)
+                    axisLeft.textColor = AndroidColor.WHITE
+                    axisLeft.setDrawGridLines(true)
+                    axisLeft.gridColor = AndroidColor.GRAY
+                    axisRight.isEnabled = false
+                    legend.textColor = AndroidColor.WHITE
+                    setNoDataText("Waiting for signal history...")
+                    setNoDataTextColor(AndroidColor.WHITE)
+                    setBackgroundColor(AndroidColor.TRANSPARENT)
+                }
+            },
+            update = { chart ->
+                if (history.isEmpty()) {
+                    chart.clear()
+                    chart.invalidate()
+                    return@AndroidView
+                }
+
+                val rsrpEntries = history.mapIndexed { index, point -> Entry(index.toFloat(), point.rsrp.toFloat()) }
+                val sinrEntries = history.mapIndexed { index, point -> Entry(index.toFloat(), point.sinr.toFloat()) }
+
+                val rsrpDataSet = LineDataSet(rsrpEntries, "RSRP (dBm)").apply {
+                    color = AndroidColor.CYAN
+                    valueTextColor = AndroidColor.TRANSPARENT
+                    setDrawCircles(false)
+                    lineWidth = 2f
+                    isHighlightEnabled = false
+                }
+
+                val sinrDataSet = LineDataSet(sinrEntries, "SINR (dB)").apply {
+                    color = AndroidColor.MAGENTA
+                    valueTextColor = AndroidColor.TRANSPARENT
+                    setDrawCircles(false)
+                    lineWidth = 2f
+                    isHighlightEnabled = false
+                }
+
+                chart.data = LineData(rsrpDataSet, sinrDataSet)
+                chart.xAxis.labelCount = 5
+                chart.notifyDataSetChanged()
+                chart.invalidate()
+            },
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 
@@ -325,7 +469,41 @@ fun RawLogScreen(vm: CellFireViewModel) {
     val state by vm.uiState.collectAsState()
     LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         items(state.logLines) { line ->
-            Text(text = line, style = MaterialTheme.typography.bodySmall)
+            Text(text = line, style = MaterialTheme.typography.bodySmall, color = Color.White)
+        }
+    }
+}
+
+@Composable
+fun PciTableScreen(vm: CellFireViewModel) {
+    val state by vm.uiState.collectAsState()
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Text("Discovered PCIs", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Spacer(modifier = Modifier.height(16.dp))
+        LazyColumn {
+            item {
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("PCI", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
+                    Text("Carrier", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(2f))
+                    Text("Count", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
+                    Text("Last Seen", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(2f))
+                    Text("Flags", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
+                }
+                Divider(color = Color.Gray)
+            }
+            items(state.discoveredPcis.sortedByDescending { it.lastSeen }) { pci ->
+                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(pci.pci.toString(), color = Color.White, modifier = Modifier.weight(1f))
+                    Text(pci.carrier, color = Color.White, modifier = Modifier.weight(2f))
+                    Text(pci.discoveryCount.toString(), color = Color.White, modifier = Modifier.weight(1f))
+                    Text(SimpleDateFormat("yy-MM-dd HH:mm", Locale.getDefault()).format(Date(pci.lastSeen)), color = Color.White, modifier = Modifier.weight(2f))
+                    Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (pci.isIgnored) Icon(Icons.Default.Block, contentDescription = "Ignored", tint = Color.Red, modifier=Modifier.size(16.dp))
+                        if (pci.isTargeted) Icon(Icons.Default.Star, contentDescription = "Targeted", tint = Color.Yellow, modifier=Modifier.size(16.dp))
+                    }
+                }
+            }
         }
     }
 }
@@ -338,21 +516,24 @@ fun SettingsScreen() {
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        Text("Settings", style=MaterialTheme.typography.headlineLarge, color = Color.White)
         OutlinedTextField(
             value = apiKey,
             onValueChange = { apiKey = it },
-            label = { Text("OpenCellID API Key") }
+            label = { Text("OpenCellID API Key") },
+            modifier = Modifier.fillMaxWidth()
         )
-        Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = {
-            with(sharedPreferences.edit()) {
-                putString(API_KEY_NAME, apiKey)
-                apply()
-            }
-        }) {
+        Button(
+            onClick = {
+                with(sharedPreferences.edit()) {
+                    putString(API_KEY_NAME, apiKey)
+                    apply()
+                }
+            },
+            modifier = Modifier.align(Alignment.End)
+        ) {
             Text("Save")
         }
     }
@@ -365,9 +546,9 @@ fun AboutScreen() {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("CellFire", style = MaterialTheme.typography.headlineLarge)
-        Text("v1.0-veteranop", style = MaterialTheme.typography.bodyLarge)
+        Text("CellFire", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Text("v1.0-veteranop", style = MaterialTheme.typography.bodyLarge, color = Color.White)
         Spacer(modifier = Modifier.height(16.dp))
-        Text("Made by VeteranOp LLC", style = MaterialTheme.typography.bodyMedium)
+        Text("Made by VeteranOp LLC", style = MaterialTheme.typography.bodyMedium, color = Color.White)
     }
 }

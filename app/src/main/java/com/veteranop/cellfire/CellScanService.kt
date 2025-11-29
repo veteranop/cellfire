@@ -115,6 +115,7 @@ class CellScanService : LifecycleService() {
             currentScan = telephonyManager.requestNetworkScan(request, mainExecutor, object : TelephonyScanManager.NetworkScanCallback() {
                 override fun onResults(results: MutableList<CellInfo>?) {
                     results?.takeIf { it.isNotEmpty() }?.let { list ->
+                        list.forEach { cellRepository.addLogLine(it.toString()) }
                         val cells = list.mapNotNull { parseCellInfo(it) }
                         cellRepository.updateCells(cells)
                         updateNotification("Deep Scan: ${cells.size} towers")
@@ -132,6 +133,7 @@ class CellScanService : LifecycleService() {
     @SuppressLint("MissingPermission")
     private fun updateFromAllCellInfo() {
         val list = telephonyManager.allCellInfo ?: return
+        list.forEach { cellRepository.addLogLine(it.toString()) }
         val cells = list.mapNotNull { parseCellInfo(it) }
         cellRepository.updateCells(cells)
     }

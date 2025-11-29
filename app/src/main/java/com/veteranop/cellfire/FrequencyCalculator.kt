@@ -1,71 +1,41 @@
 package com.veteranop.cellfire
 
 import android.content.Context
-import org.json.JSONObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.decodeFromString
 
 object FrequencyCalculator {
-    private lateinit var json: JSONObject
+
+    private var lteBands: Map<String, BandInfo> = emptyMap()
+    private var nrBands: Map<String, BandInfo> = emptyMap()
 
     fun init(context: Context) {
-        try {
-            val text = context.assets.open("earfcn_frequencies.json").use { it.reader().readText() }
-            json = JSONObject(text)
-        } catch (e: Exception) {
-            // Handle exceptions, e.g., file not found
-            json = JSONObject() // Initialize with an empty object to avoid crashes
-        }
+        val json = Json { ignoreUnknownKeys = true }
+        val earfcnJson = context.assets.open("earfcn_frequencies.json").bufferedReader().use { it.readText() }
+        val bandData: BandData = json.decodeFromString(earfcnJson)
+        lteBands = bandData.lte
+        nrBands = bandData.nr
     }
 
     fun getLteFrequency(earfcn: Int): Pair<Double, Double>? {
-        if (!::json.isInitialized || !json.has("lte")) return null
-        val lte = json.optJSONObject("lte") ?: return null
-        val bands = lte.optJSONObject("bands") ?: return null
+        val band = lteBands.values.firstOrNull { earfcn in it.dl.split("-").let { r -> r[0].toInt()..r[1].toInt() } } ?: return null
+        val dlOffset = earfcn - band.dl.split("-")[0].toInt()
+        val ulOffset = earfcn - band.ul.split("-")[0].toInt()
 
-        for (bandKey in bands.keys()) {
-            val band = bands.optJSONObject(bandKey) ?: continue
-            val dlLow = band.optDouble("dl_low")
-            val dlOffset = band.optInt("dl_offset")
-            val ulLow = band.optDouble("ul_low")
-            val duplexMode = band.optString("duplex", "FDD")
-            val rangeLen = band.optInt("range_len", 600)
+        val dlFreq = (band.likely_bw as? Double)?.plus(0.1 * dlOffset) ?: 0.0
+        val ulFreq = (band.likely_bw as? Double)?.plus(0.1 * ulOffset) ?: 0.0
 
-            val dlRangeEnd = dlOffset + rangeLen - 1
-
-            if (earfcn in dlOffset..dlRangeEnd) {
-                val dlFreq = dlLow + 0.1 * (earfcn - dlOffset)
-                
-                val ulFreq = if (duplexMode == "FDD") {
-                    // For FDD, calculate the offset from the start of the DL range
-                    // and apply it to the start of the UL frequency range.
-                    val earfcnInBandOffset = earfcn - dlOffset
-                    ulLow + 0.1 * earfcnInBandOffset
-                } else {
-                    // For TDD, UL and DL use the same frequency band.
-                    dlFreq 
-                }
-
-                return dlFreq to ulFreq
-            }
-        }
-        return null
+        return Pair(dlFreq, ulFreq)
     }
 
     fun getNrFrequency(nrarfcn: Int): Pair<Double, Double>? {
-        if (!::json.isInitialized || !json.has("nr")) return null
-        val nr = json.optJSONObject("nr") ?: return null
-        val global = nr.optJSONObject("global") ?: return null
-        
-        val range = when {
-            nrarfcn < 600000 -> global.optJSONObject("low")
-            nrarfcn < 2016667 -> global.optJSONObject("mid")
-            else -> global.optJSONObject("high")
-        } ?: return null
+        val band = nrBands.values.firstOrNull { nrarfcn in it.dl.split("-").let { r -> r[0].toInt()..r[1].toInt() } } ?: return null
+        val dlOffset = nrarfcn - band.dl.split("-")[0].toInt()
+        val ulOffset = nrarfcn - band.ul.split("-")[0].toInt()
 
-        val fRefLow = range.optDouble("f_ref_low")
-        val nRefOffset = range.optInt("n_ref_offset")
-        val deltaF = range.optDouble("delta_f") / 1000.0 // kHz → MHz
+        val dlFreq = (band.likely_bw as? Double)?.plus(0.05 * dlOffset) ?: 0.0
+        val ulFreq = (band.likely_bw as? Double)?.plus(0.05 * ulOffset) ?: 0.0
 
-        val fRef = fRefLow + deltaF * (nrarfcn - nRefOffset)
-        return fRef to fRef // TDD has same UL/DL
+        return Pair(dlFreq, ulFreq)
     }
 }
