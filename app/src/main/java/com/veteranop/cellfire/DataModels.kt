@@ -2,18 +2,21 @@ package com.veteranop.cellfire
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
 // ==================================================
 // DATA MODELS
 // ==================================================
 
+@Serializable
 data class BandInfo(
     val dl: String,
     val ul: String,
-    val bw: List<Any>,
-    val likely_bw: Any
+    val bw: List<Double>,
+    val likely_bw: Double
 )
 
+@Serializable
 data class BandData(
     val lte: Map<String, BandInfo>,
     val nr: Map<String, BandInfo>
