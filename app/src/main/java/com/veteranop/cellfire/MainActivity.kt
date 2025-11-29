@@ -334,9 +334,11 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int) {
                             readOnly = true,
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                             modifier = Modifier.menuAnchor().fillMaxWidth(),
-                            colors = TextFieldDefaults.outlinedTextFieldColors(textColor = Color.White, focusedBorderColor = Color.White, unfocusedBorderColor = Color.LightGray)
+                            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, focusedBorderColor = Color.White, unfocusedBorderColor = Color.LightGray, cursorColor = Color.White)
                         )
                         ExposedDropdownMenu(
+                            expanded = expanded,
+                            onDismissRequest = { expanded = false },
                             modifier = Modifier.background(Color.Gray)
                         ) {
                             state.selectedCarriers.forEach { carrier ->
