@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("kotlin-kapt")
     id("com.google.dagger.hilt.android")
-    id("org.jetbrains.kotlin.plugin.serialization") version "1.9.23" // specify version for safety
+    id("org.jetbrains.kotlin.plugin.serialization") version "1.9.23"
     id("com.google.gms.google-services")
 }
 
@@ -79,7 +79,8 @@ dependencies {
     // Charting
     implementation("com.github.PhilJay:MPAndroidChart:v3.1.0")
 
-    // Permissions
+    // Serialization
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
     // Retrofit + Moshi
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
