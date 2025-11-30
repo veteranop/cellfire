@@ -58,4 +58,12 @@ class CellFireViewModel @Inject constructor(
     fun updatePci(pci: Int, isIgnored: Boolean? = null, isTargeted: Boolean? = null) {
         cellRepository.updatePciFlags(pci, isIgnored, isTargeted)
     }
+
+    fun clearLog() {
+        cellRepository.clearLog()
+    }
+
+    fun clearPciHistory() {
+        cellRepository.clearPciHistory()
+    }
 }
