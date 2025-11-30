@@ -15,6 +15,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.Star
@@ -23,12 +24,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -90,7 +93,11 @@ class MainActivity : ComponentActivity() {
                         composable("raw") { RawLogScreen(vm) }
                         composable("about") { AboutScreen() }
                         composable("settings") { SettingsScreen() }
-                        composable("pci_table") { PciTableScreen(vm) }
+                        composable("pci_table") { PciTableScreen(navController, vm) }
+                        composable("pci_carrier_list/{carrier}") { backStackEntry ->
+                            val carrier = backStackEntry.arguments?.getString("carrier") ?: ""
+                            PciCarrierListScreen(vm, carrier)
+                        }
                     }
                 }
             }
@@ -153,35 +160,43 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Image(
-            painter = painterResource(id = R.drawable.cfbackground),
-            contentDescription = "background",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize().alpha(0.4f)
-        )
-        Scaffold(
-            containerColor = Color.Transparent,
-            floatingActionButton = {
-                ElevatedButton(
-                    onClick = { vm.toggleDeepScan(!deepScanActive) },
-                    colors = ButtonDefaults.elevatedButtonColors(
-                        containerColor = if (deepScanActive) Color(0xFFFF2D00) else Color(0xFF444444)
-                    ),
-                ) {
-                    Text(
-                        text = "DEEP SCAN: ${if (deepScanActive) "ACTIVE (5s)" else "OFF"}",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        ) { innerPadding ->
+    Scaffold(
+        containerColor = Color.Transparent,
+    ) { innerPadding ->
+        Box(modifier = Modifier.fillMaxSize()) {
+            Image(
+                painter = painterResource(id = R.drawable.cfbackground),
+                contentDescription = "background",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().alpha(0.4f)
+            )
             Column(modifier = Modifier.padding(innerPadding).padding(16.dp)) {
-                Image(painter = painterResource(id = R.drawable.app_name), contentDescription = "app logo", modifier = Modifier.padding(bottom=16.dp))
+                Image(painter = painterResource(id = R.drawable.app_name), contentDescription = "app logo", modifier = Modifier.padding(bottom = 16.dp))
 
-                ElevatedButton(onClick = { vm.toggleMonitoring() }) {
-                    Text(if (state.isMonitoring) "CEASE FIRE" else "ENGAGE TARGETS", color = Color.White)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ElevatedButton(onClick = { vm.toggleMonitoring() }) {
+                        Text(if (state.isMonitoring) "CEASE FIRE" else "ENGAGE TARGETS", color = Color.White)
+                    }
+                    ElevatedButton(
+                        onClick = { vm.toggleDeepScan(!deepScanActive) },
+                        colors = ButtonDefaults.elevatedButtonColors(
+                            containerColor = if (deepScanActive) Color(0xFFFF6B00) else Color(0xFF2D2D2D),
+                            contentColor = Color.White
+                        ),
+                        elevation = ButtonDefaults.elevatedButtonElevation(
+                            defaultElevation = 8.dp,
+                            pressedElevation = 12.dp
+                        ),
+                        modifier = Modifier.shadow(12.dp, RoundedCornerShape(32.dp))
+                    ) {
+                        Text(
+                            text = "DEEP SCAN: ${if (deepScanActive) "ACTIVE" else "PASSIVE"}",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            letterSpacing = 1.sp,
+                            color = Color.White
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(16.dp))
@@ -468,46 +483,123 @@ fun MapScreen(vm: CellFireViewModel) {
 @Composable
 fun RawLogScreen(vm: CellFireViewModel) {
     val state by vm.uiState.collectAsState()
-    LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        items(state.logLines) { line ->
-            Text(text = line, style = MaterialTheme.typography.bodySmall, color = Color.White)
+    Scaffold(
+        containerColor = Color.Transparent,
+        floatingActionButton = {
+            Button(onClick = { vm.clearLog() }) {
+                Text("Clear Log")
+            }
+        }
+    ) { innerPadding ->
+        Box(modifier = Modifier.fillMaxSize()) {
+            Image(
+                painter = painterResource(id = R.drawable.cfbackground),
+                contentDescription = "background",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().alpha(0.4f)
+            )
+            LazyColumn(modifier = Modifier.padding(innerPadding).fillMaxSize().padding(16.dp)) {
+                items(state.logLines) { line ->
+                    Text(text = line, style = MaterialTheme.typography.bodySmall, color = Color.White)
+                }
+            }
         }
     }
 }
 
 @Composable
-fun PciTableScreen(vm: CellFireViewModel) {
+fun PciTableScreen(navController: NavController, vm: CellFireViewModel) {
     val state by vm.uiState.collectAsState()
+    val carriers = state.discoveredPcis.map { it.carrier }.distinct()
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Discovered PCIs", style = MaterialTheme.typography.headlineLarge, color = Color.White)
-        Spacer(modifier = Modifier.height(16.dp))
-        LazyColumn {
-            item {
-                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("PCI", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
-                    Text("Carrier", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(2f))
-                    Text("Count", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
-                    Text("Last Seen", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(2f))
-                    Text("Flags", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
+    Box(modifier = Modifier.fillMaxSize()) {
+        Image(
+            painter = painterResource(id = R.drawable.cfbackground),
+            contentDescription = "background",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().alpha(0.4f)
+        )
+        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+            Row {
+                Text("Discovered PCIs by Carrier", style = MaterialTheme.typography.headlineLarge, color = Color.White, modifier = Modifier.weight(1f))
+                Button(onClick = { vm.clearPciHistory() }) {
+                    Text("Clear All")
                 }
-                Divider(color = Color.Gray)
             }
-            items(state.discoveredPcis.sortedByDescending { it.lastSeen }) { pci ->
-                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(pci.pci.toString(), color = Color.White, modifier = Modifier.weight(1f))
-                    Text(pci.carrier, color = Color.White, modifier = Modifier.weight(2f))
-                    Text(pci.discoveryCount.toString(), color = Color.White, modifier = Modifier.weight(1f))
-                    Text(SimpleDateFormat("yy-MM-dd HH:mm", Locale.getDefault()).format(Date(pci.lastSeen)), color = Color.White, modifier = Modifier.weight(2f))
-                    Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (pci.isIgnored) Icon(Icons.Default.AccountBox, contentDescription = "Ignored", tint = Color.Red, modifier=Modifier.size(16.dp))
-                        if (pci.isTargeted) Icon(Icons.Default.Star, contentDescription = "Targeted", tint = Color.Yellow, modifier=Modifier.size(16.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(carriers) { carrier ->
+                    val pciCount = state.discoveredPcis.count { it.carrier == carrier }
+                    val cellColor = when (carrier.lowercase()) {
+                        "t-mobile", "t-mobile (low-band)" -> Color(0xFFE20074)
+                        "verizon", "verizon (b5)" -> Color(0xFFCC0000)
+                        "at&t" -> Color(0xFF00A8E8)
+                        "firstnet" -> Color.Black
+                        "dish wireless" -> Color(0xFFFF6200)
+                        else -> Color.DarkGray
+                    }
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = cellColor.copy(alpha = 0.7f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(60.dp)
+                            .clickable { navController.navigate("pci_carrier_list/$carrier") }
+                    ) {
+                        Row(modifier = Modifier.fillMaxSize().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(carrier, style = MaterialTheme.typography.headlineSmall, color = Color.White, modifier = Modifier.weight(1f))
+                            Text("$pciCount PCIs", color = Color.White)
+                        }
                     }
                 }
             }
         }
     }
 }
+
+@Composable
+fun PciCarrierListScreen(vm: CellFireViewModel, carrier: String) {
+    val state by vm.uiState.collectAsState()
+    val pcis = state.discoveredPcis.filter { it.carrier == carrier }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Image(
+            painter = painterResource(id = R.drawable.cfbackground),
+            contentDescription = "background",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().alpha(0.4f)
+        )
+        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+            Text(carrier, style = MaterialTheme.typography.headlineLarge, color = Color.White)
+            Spacer(modifier = Modifier.height(16.dp))
+            LazyColumn {
+                item {
+                    Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                        Text("PCI", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
+                        Text("Count", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
+                        Text("Last Seen", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(2f))
+                        Text("Flags", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
+                    }
+                    Divider(color = Color.Gray)
+                }
+                items(pcis.sortedByDescending { it.lastSeen }) { pci ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(pci.pci.toString(), color = Color.White, modifier = Modifier.weight(1f))
+                        Text(pci.discoveryCount.toString(), color = Color.White, modifier = Modifier.weight(1f))
+                        Text(SimpleDateFormat("yy-MM-dd HH:mm", Locale.getDefault()).format(Date(pci.lastSeen)), color = Color.White, modifier = Modifier.weight(2f))
+                        Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (pci.isIgnored) Icon(Icons.Default.AccountBox, contentDescription = "Ignored", tint = Color.Red, modifier = Modifier.size(16.dp))
+                            if (pci.isTargeted) Icon(Icons.Default.Star, contentDescription = "Targeted", tint = Color.Yellow, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 @Composable
 fun SettingsScreen() {

@@ -16,4 +16,7 @@ interface DiscoveredPciDao {
 
     @Query("SELECT * FROM discovered_pcis WHERE pci = :pci LIMIT 1")
     suspend fun getPci(pci: Int): DiscoveredPci?
+
+    @Query("DELETE FROM discovered_pcis")
+    suspend fun clearAll()
 }

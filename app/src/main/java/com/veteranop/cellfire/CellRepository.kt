@@ -46,6 +46,16 @@ class CellRepository @Inject constructor(
         _uiState.update { it.copy(logLines = (listOf(logLine) + it.logLines).take(200)) }
     }
 
+    fun clearLog() {
+        _uiState.update { it.copy(logLines = emptyList()) }
+    }
+
+    fun clearPciHistory() {
+        repositoryScope.launch {
+            discoveredPciDao.clearAll()
+        }
+    }
+
     fun updateCarrierForPci(pci: Int, arfcn: Int, newCarrier: String) {
         _uiState.update { currentState ->
             val newCells = currentState.cells.map { cell ->
