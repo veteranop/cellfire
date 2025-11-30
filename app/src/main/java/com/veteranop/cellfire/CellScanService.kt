@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.SystemClock
 import android.telephony.*
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
@@ -21,9 +22,10 @@ class CellScanService : LifecycleService() {
     @Inject lateinit var cellRepository: CellRepository
 
     private val telephonyManager by lazy { getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager }
-    private var regularJob: Job? = null
-    private var deepScanJob: Job? = null
-    private var currentScan: NetworkScan? = null
+    private var scanJob: Job? = null
+    private var isDeepScanActive = true // Deep scan is on by default
+
+    private var phoneStateListener: PhoneStateListener? = null
 
     companion object {
         const val ACTION_START = "ACTION_START"
@@ -40,102 +42,83 @@ class CellScanService : LifecycleService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
         when (intent?.action) {
             ACTION_START -> startScanning()
             ACTION_STOP -> stopScanning()
             ACTION_TOGGLE_DEEP -> {
-                val enable = intent.getBooleanExtra("enable", true)
-                if (enable) startDeepScan() else stopDeepScan()
+                isDeepScanActive = intent.getBooleanExtra("enable", true)
+                // Restart scanning to apply the new mode
+                if (scanJob?.isActive == true) {
+                    startScanning()
+                }
             }
         }
         return START_STICKY
     }
 
     private fun startScanning() {
-        if (regularJob?.isActive == true) return
+        scanJob?.cancel()
         cellRepository.setServiceActive(true)
 
-        regularJob = lifecycleScope.launch {
+        scanJob = lifecycleScope.launch(Dispatchers.IO) {
             while (isActive) {
-                updateFromAllCellInfo()
-                delay(1800)
+                val startTime = SystemClock.elapsedRealtime()
+
+                if (isDeepScanActive) {
+                    withContext(Dispatchers.Main) { registerPhoneStateListener() }
+                    scanOnce()
+                } else {
+                    withContext(Dispatchers.Main) { unregisterPhoneStateListener() }
+                    scanOnce()
+                }
+
+                val passiveDelay = 4_000L
+                val deepDelay = if(isDeepScanActive) 100L else passiveDelay
+                val elapsed = SystemClock.elapsedRealtime() - startTime
+                val sleepTime = (deepDelay - elapsed).coerceAtLeast(50L).coerceAtMost(500L)
+                delay(sleepTime)
             }
         }
-
-        // Deep scan ON by default — this is what you want in the field
-        startDeepScan()
-    }
-
-    private fun startDeepScan() {
-        if (deepScanJob?.isActive == true) return
-        deepScanJob = lifecycleScope.launch(Dispatchers.IO) {
-            while (isActive) {
-                performDeepScan()
-                delay(5000L) // ← Forces full neighbor scan every 5 seconds
-            }
-        }
-        updateNotification("Deep Scan ACTIVE – 5s")
-    }
-
-    private fun stopDeepScan() {
-        deepScanJob?.cancel()
-        currentScan?.stopScan()
-        currentScan = null
-        updateNotification("CellFire Active")
     }
 
     private fun stopScanning() {
-        regularJob?.cancel()
-        stopDeepScan()
+        scanJob?.cancel()
+        runBlocking { withContext(Dispatchers.Main) { unregisterPhoneStateListener() } }
         cellRepository.setServiceActive(false)
         stopForeground(true)
         stopSelf()
     }
 
     @SuppressLint("MissingPermission")
-    private fun performDeepScan() {
-        currentScan?.stopScan()
-        if (Build.VERSION.SDK_INT < 28) {
-            updateFromAllCellInfo()
-            return
-        }
-
-        val specifiers = arrayOf(
-            RadioAccessSpecifier(AccessNetworkConstants.AccessNetworkType.EUTRAN, null, null),
-            RadioAccessSpecifier(AccessNetworkConstants.AccessNetworkType.NGRAN, null, null)
-        )
-
-        val request = NetworkScanRequest(
-            NetworkScanRequest.SCAN_TYPE_ONE_SHOT,
-            specifiers,
-            45, 0, false, 1, null
-        )
-
-        try {
-            currentScan = telephonyManager.requestNetworkScan(request, mainExecutor, object : TelephonyScanManager.NetworkScanCallback() {
-                override fun onResults(results: MutableList<CellInfo>?) {
-                    results?.takeIf { it.isNotEmpty() }?.let { list ->
-                        list.forEach { cellRepository.addLogLine(it.toString()) }
-                        val cells = list.mapNotNull { parseCellInfo(it) }
-                        cellRepository.updateCells(cells)
-                        updateNotification("Deep Scan: ${cells.size} towers")
-                    }
-                }
-
-                override fun onComplete() {}
-                override fun onError(error: Int) { updateFromAllCellInfo() }
-            })
-        } catch (e: Exception) {
-            updateFromAllCellInfo()
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun updateFromAllCellInfo() {
+    private fun scanOnce() {
         val list = telephonyManager.allCellInfo ?: return
-        list.forEach { cellRepository.addLogLine(it.toString()) }
+        cellRepository.addLogLine("Scan found ${list.size} cells")
         val cells = list.mapNotNull { parseCellInfo(it) }
         cellRepository.updateCells(cells)
+    }
+
+    private fun registerPhoneStateListener() {
+        if (phoneStateListener != null) return
+        phoneStateListener = object : PhoneStateListener() {
+            override fun onSignalStrengthsChanged(signalStrength: SignalStrength?) {
+                super.onSignalStrengthsChanged(signalStrength)
+                lifecycleScope.launch(Dispatchers.IO) { scanOnce() }
+            }
+
+            override fun onServiceStateChanged(serviceState: ServiceState?) {
+                super.onServiceStateChanged(serviceState)
+                lifecycleScope.launch(Dispatchers.IO) { scanOnce() }
+            }
+        }
+        telephonyManager.listen(phoneStateListener, PhoneStateListener.LISTEN_SIGNAL_STRENGTHS or PhoneStateListener.LISTEN_SERVICE_STATE)
+    }
+
+    private fun unregisterPhoneStateListener() {
+        phoneStateListener?.let {
+            telephonyManager.listen(it, PhoneStateListener.LISTEN_NONE)
+            phoneStateListener = null
+        }
     }
 
     private fun createNotificationChannel() {
@@ -154,12 +137,6 @@ class CellScanService : LifecycleService() {
             .setSilent(true)
             .build()
 
-    private fun updateNotification(text: String) {
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.notify(NOTIFICATION_ID, createNotification(text))
-    }
-
-    // --- IMPLEMENTED PARSING LOGIC ---
     @SuppressLint("MissingPermission")
     private fun parseCellInfo(info: CellInfo): Cell? {
         return when (info) {

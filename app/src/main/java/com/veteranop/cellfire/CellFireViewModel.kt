@@ -24,15 +24,11 @@ class CellFireViewModel @Inject constructor(
     fun onPermissionsResult(granted: Boolean) {
         cellRepository.setPermissionsGranted(granted)
         if (granted) {
-            startMonitoring()
+            val intent = Intent(application, CellScanService::class.java).apply {
+                action = CellScanService.ACTION_START
+            }
+            ContextCompat.startForegroundService(application, intent)
         }
-    }
-
-    fun startMonitoring() {
-        val intent = Intent(application, CellScanService::class.java).apply {
-            action = CellScanService.ACTION_START
-        }
-        ContextCompat.startForegroundService(application, intent)
     }
 
     fun toggleMonitoring() {
