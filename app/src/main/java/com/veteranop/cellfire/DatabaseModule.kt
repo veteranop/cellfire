@@ -19,7 +19,7 @@ object DatabaseModule {
             context,
             AppDatabase::class.java,
             "cellfire-db"
-        ).build()
+        ).fallbackToDestructiveMigration().build()
     }
 
     @Provides

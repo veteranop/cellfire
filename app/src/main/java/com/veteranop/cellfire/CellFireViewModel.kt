@@ -51,12 +51,12 @@ class CellFireViewModel @Inject constructor(
         _deepScanActive.value = enable
     }
 
-    fun updateCarrier(pci: Int, arfcn: Int, newCarrier: String) {
-        cellRepository.updateCarrierForPci(pci, arfcn, newCarrier)
+    fun updateCarrier(pci: Int, band: String, newCarrier: String) {
+        cellRepository.updateCarrierForPci(pci, band, newCarrier)
     }
 
-    fun updatePci(pci: Int, isIgnored: Boolean? = null, isTargeted: Boolean? = null) {
-        cellRepository.updatePciFlags(pci, isIgnored, isTargeted)
+    fun updatePci(pci: Int, band: String, isIgnored: Boolean? = null, isTargeted: Boolean? = null) {
+        cellRepository.updatePciFlags(pci, band, isIgnored, isTargeted)
     }
 
     fun clearLog() {

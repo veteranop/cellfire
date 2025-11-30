@@ -120,7 +120,7 @@ fun StartScreen(navController: NavController) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Image(painter = painterResource(id = R.drawable.app_name), contentDescription = "app logo")
-            Text("v1.0.0.3.alpha", style = MaterialTheme.typography.bodyLarge, color = Color.White)
+            Text("v1.0.0.4.alpha", style = MaterialTheme.typography.bodyLarge, color = Color.White)
             Spacer(modifier = Modifier.height(32.dp))
             Button(onClick = { navController.navigate("scan") }, modifier = Modifier.fillMaxWidth()) { Text("Start Scan") }
             Spacer(modifier = Modifier.height(8.dp))
@@ -210,14 +210,14 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                 }
 
                 val filteredCells = state.cells.filter {
-                    val discoveredPci = state.discoveredPcis.find { pci -> pci.pci == it.pci }
+                    val discoveredPci = state.discoveredPcis.find { pci -> pci.pci == it.pci && pci.band == it.band }
                     val isIgnored = discoveredPci?.isIgnored ?: false
                     !isIgnored
                 }
 
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(filteredCells, key = { "${it.pci}-${it.arfcn}" }) { cell ->
-                        val discoveredPci = state.discoveredPcis.find { it.pci == cell.pci }
+                        val discoveredPci = state.discoveredPcis.find { it.pci == cell.pci && it.band == cell.band }
                         val cellColor = when (cell.carrier.lowercase()) {
                             "t-mobile", "t-mobile (low-band)" -> Color(0xFFE20074)
                             "verizon", "verizon (b5)" -> Color(0xFFCC0000)
@@ -248,7 +248,7 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                     }
                 }
 
-                Text(text = "v1.0.0.3.alpha • VeteranOp Industries", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
+                Text(text = "v1.0.0.4.alpha • VeteranOp Industries", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
             }
         }
     }
@@ -371,13 +371,13 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Button(onClick = { 
-                            vm.updatePci(pci, isIgnored = true)
+                            vm.updatePci(pci, currentCell.band, isIgnored = true)
                             showDialog = false 
                         }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF600000))) { Text("Ignore") }
                         
-                        val isTargeted = state.discoveredPcis.find { it.pci == pci }?.isTargeted == true
+                        val isTargeted = state.discoveredPcis.find { it.pci == pci && it.band == currentCell.band }?.isTargeted == true
                         Button(onClick = { 
-                            vm.updatePci(pci, isTargeted = !isTargeted)
+                            vm.updatePci(pci, currentCell.band, isTargeted = !isTargeted)
                             showDialog = false
                         }, modifier = Modifier.weight(1f)) { Text(if (isTargeted) "Untarget" else "Target") }
                     }
@@ -386,7 +386,7 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
             confirmButton = {
                 Button(
                     onClick = {
-                        vm.updateCarrier(pci, arfcn, selectedCarrier)
+                        vm.updateCarrier(pci, currentCell.band, selectedCarrier)
                         showDialog = false
                     }
                 ) {
@@ -480,15 +480,22 @@ fun MapScreen(vm: CellFireViewModel) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RawLogScreen(vm: CellFireViewModel) {
     val state by vm.uiState.collectAsState()
     Scaffold(
         containerColor = Color.Transparent,
-        floatingActionButton = {
-            Button(onClick = { vm.clearLog() }) {
-                Text("Clear Log")
-            }
+        topBar = {
+            TopAppBar(
+                title = { Text("Raw Logs", color = Color.White) },
+                actions = {
+                    Button(onClick = { vm.clearLog() }) {
+                        Text("Clear")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+            )
         }
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize()) {
@@ -507,27 +514,37 @@ fun RawLogScreen(vm: CellFireViewModel) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PciTableScreen(navController: NavController, vm: CellFireViewModel) {
     val state by vm.uiState.collectAsState()
     val carriers = state.discoveredPcis.map { it.carrier }.distinct()
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Image(
-            painter = painterResource(id = R.drawable.cfbackground),
-            contentDescription = "background",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize().alpha(0.4f)
-        )
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            Row {
-                Text("Discovered PCIs by Carrier", style = MaterialTheme.typography.headlineLarge, color = Color.White, modifier = Modifier.weight(1f))
-                Button(onClick = { vm.clearPciHistory() }) {
-                    Text("Clear All")
-                }
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Scaffold(
+        containerColor = Color.Transparent,
+        topBar = {
+            TopAppBar(
+                title = { Text("Discovered PCIs by Carrier", color = Color.White) },
+                actions = {
+                    Button(onClick = { vm.clearPciHistory() }) {
+                        Text("Clear All")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+            )
+        }
+    ) { innerPadding ->
+        Box(modifier = Modifier.fillMaxSize()) {
+            Image(
+                painter = painterResource(id = R.drawable.cfbackground),
+                contentDescription = "background",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().alpha(0.4f)
+            )
+            LazyColumn(
+                modifier = Modifier.padding(innerPadding).padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 items(carriers) { carrier ->
                     val pciCount = state.discoveredPcis.count { it.carrier == carrier }
                     val cellColor = when (carrier.lowercase()) {
@@ -556,25 +573,46 @@ fun PciTableScreen(navController: NavController, vm: CellFireViewModel) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PciCarrierListScreen(vm: CellFireViewModel, carrier: String) {
     val state by vm.uiState.collectAsState()
     val pcis = state.discoveredPcis.filter { it.carrier == carrier }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Image(
-            painter = painterResource(id = R.drawable.cfbackground),
-            contentDescription = "background",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize().alpha(0.4f)
-        )
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            Text(carrier, style = MaterialTheme.typography.headlineLarge, color = Color.White)
-            Spacer(modifier = Modifier.height(16.dp))
-            LazyColumn {
+    Scaffold(
+        containerColor = Color.Transparent,
+        topBar = {
+            TopAppBar(
+                title = { 
+                    val cellColor = when (carrier.lowercase()) {
+                        "t-mobile", "t-mobile (low-band)" -> Color(0xFFE20074)
+                        "verizon", "verizon (b5)" -> Color(0xFFCC0000)
+                        "at&t" -> Color(0xFF00A8E8)
+                        "firstnet" -> Color.Black
+                        "dish wireless" -> Color(0xFFFF6200)
+                        else -> Color.DarkGray
+                    }
+                    Text(carrier, style = MaterialTheme.typography.headlineLarge, color = cellColor)
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+            )
+        }
+    ) { innerPadding ->
+        Box(modifier = Modifier.fillMaxSize()) {
+            Image(
+                painter = painterResource(id = R.drawable.cfbackground),
+                contentDescription = "background",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().alpha(0.4f)
+            )
+            LazyColumn(
+                modifier = Modifier.padding(innerPadding).fillMaxSize().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 item {
                     Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                         Text("PCI", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
+                        Text("Band", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
                         Text("Count", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
                         Text("Last Seen", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(2f))
                         Text("Flags", fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
@@ -582,16 +620,22 @@ fun PciCarrierListScreen(vm: CellFireViewModel, carrier: String) {
                     Divider(color = Color.Gray)
                 }
                 items(pcis.sortedByDescending { it.lastSeen }) { pci ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color.DarkGray.copy(alpha = 0.6f)),
+                        modifier = Modifier.fillMaxWidth().height(60.dp)
                     ) {
-                        Text(pci.pci.toString(), color = Color.White, modifier = Modifier.weight(1f))
-                        Text(pci.discoveryCount.toString(), color = Color.White, modifier = Modifier.weight(1f))
-                        Text(SimpleDateFormat("yy-MM-dd HH:mm", Locale.getDefault()).format(Date(pci.lastSeen)), color = Color.White, modifier = Modifier.weight(2f))
-                        Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (pci.isIgnored) Icon(Icons.Default.AccountBox, contentDescription = "Ignored", tint = Color.Red, modifier = Modifier.size(16.dp))
-                            if (pci.isTargeted) Icon(Icons.Default.Star, contentDescription = "Targeted", tint = Color.Yellow, modifier = Modifier.size(16.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(pci.pci.toString(), color = Color.White, modifier = Modifier.weight(1f))
+                            Text(pci.band, color = Color.White, modifier = Modifier.weight(1f))
+                            Text(pci.discoveryCount.toString(), color = Color.White, modifier = Modifier.weight(1f))
+                            Text(SimpleDateFormat("yy-MM-dd HH:mm", Locale.getDefault()).format(Date(pci.lastSeen)), color = Color.White, modifier = Modifier.weight(2f))
+                            Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (pci.isIgnored) Icon(Icons.Default.AccountBox, contentDescription = "Ignored", tint = Color.Red, modifier = Modifier.size(16.dp))
+                                if (pci.isTargeted) Icon(Icons.Default.Star, contentDescription = "Targeted", tint = Color.Yellow, modifier = Modifier.size(16.dp))
+                            }
                         }
                     }
                 }
@@ -640,7 +684,7 @@ fun AboutScreen() {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("CellFire", style = MaterialTheme.typography.headlineLarge, color = Color.White)
-        Text("v1.0.0.3.alpha", style = MaterialTheme.typography.bodyLarge, color = Color.White)
+        Text("v1.0.0.4.alpha", style = MaterialTheme.typography.bodyLarge, color = Color.White)
         Spacer(modifier = Modifier.height(16.dp))
         Text("Made by VeteranOp LLC", style = MaterialTheme.typography.bodyMedium, color = Color.White)
     }

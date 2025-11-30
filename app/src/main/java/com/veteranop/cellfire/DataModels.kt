@@ -66,8 +66,10 @@ data class NrCell(
 
 @Entity(tableName = "discovered_pcis")
 data class DiscoveredPci(
-    @PrimaryKey val pci: Int,
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val pci: Int,
     var carrier: String,
+    var band: String,
     var discoveryCount: Int,
     var lastSeen: Long,
     var isIgnored: Boolean = false,
