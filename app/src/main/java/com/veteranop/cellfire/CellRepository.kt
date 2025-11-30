@@ -56,10 +56,10 @@ class CellRepository @Inject constructor(
         }
     }
 
-    fun updateCarrierForPci(pci: Int, arfcn: Int, newCarrier: String) {
+    fun updateCarrierForPci(pci: Int, band: String, newCarrier: String) {
         _uiState.update { currentState ->
             val newCells = currentState.cells.map { cell ->
-                if (cell.pci == pci && cell.arfcn == arfcn) {
+                if (cell.pci == pci && cell.band == band) {
                     cell.carrier = newCarrier
                 }
                 cell
@@ -67,7 +67,7 @@ class CellRepository @Inject constructor(
             currentState.copy(cells = newCells)
         }
         repositoryScope.launch {
-            val discovered = discoveredPciDao.getPci(pci)
+            val discovered = discoveredPciDao.getDiscoveredPci(pci, band)
             if (discovered != null) {
                 discovered.carrier = newCarrier
                 discoveredPciDao.insert(discovered)
@@ -75,9 +75,9 @@ class CellRepository @Inject constructor(
         }
     }
 
-    fun updatePciFlags(pci: Int, isIgnored: Boolean? = null, isTargeted: Boolean? = null) {
+    fun updatePciFlags(pci: Int, band: String, isIgnored: Boolean? = null, isTargeted: Boolean? = null) {
         repositoryScope.launch {
-            val discovered = discoveredPciDao.getPci(pci)
+            val discovered = discoveredPciDao.getDiscoveredPci(pci, band)
             if (discovered != null) {
                 isIgnored?.let { discovered.isIgnored = it }
                 isTargeted?.let { discovered.isTargeted = it }
@@ -89,7 +89,7 @@ class CellRepository @Inject constructor(
     private suspend fun updateDiscoveredPcis(cells: List<Cell>) {
         val now = System.currentTimeMillis()
         for (cell in cells) {
-            val existingPci = discoveredPciDao.getPci(cell.pci)
+            val existingPci = discoveredPciDao.getDiscoveredPci(cell.pci, cell.band)
             if (existingPci != null) {
                 existingPci.discoveryCount++
                 existingPci.lastSeen = now
@@ -99,6 +99,7 @@ class CellRepository @Inject constructor(
                     DiscoveredPci(
                         pci = cell.pci,
                         carrier = cell.carrier,
+                        band = cell.band,
                         discoveryCount = 1,
                         lastSeen = now
                     )

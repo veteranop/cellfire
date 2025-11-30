@@ -14,8 +14,8 @@ interface DiscoveredPciDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(pci: DiscoveredPci)
 
-    @Query("SELECT * FROM discovered_pcis WHERE pci = :pci LIMIT 1")
-    suspend fun getPci(pci: Int): DiscoveredPci?
+    @Query("SELECT * FROM discovered_pcis WHERE pci = :pci AND band = :band LIMIT 1")
+    suspend fun getDiscoveredPci(pci: Int, band: String): DiscoveredPci?
 
     @Query("DELETE FROM discovered_pcis")
     suspend fun clearAll()
