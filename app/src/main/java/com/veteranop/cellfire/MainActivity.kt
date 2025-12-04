@@ -1,8 +1,5 @@
 package com.veteranop.cellfire
 
-const val PREFS_NAME = "CellFirePrefs"
-const val API_KEY_NAME = "opencellid_api_key"
-
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -55,7 +52,8 @@ import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import java.text.SimpleDateFormat
 import java.util.*
-
+const val PREFS_NAME = "CellFirePrefs"
+const val API_KEY_NAME = "opencellid_api_key"
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
