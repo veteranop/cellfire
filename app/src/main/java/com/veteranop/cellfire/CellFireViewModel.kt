@@ -4,6 +4,8 @@ import android.app.Application
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
+import com.veteranop.cellfire.data.CellRepository
+import com.veteranop.cellfire.data.model.CellFireUiState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,11 +25,8 @@ class CellFireViewModel @Inject constructor(
 
     fun onPermissionsResult(granted: Boolean) {
         cellRepository.setPermissionsGranted(granted)
-        if (granted) {
-            val intent = Intent(application, CellScanService::class.java).apply {
-                action = CellScanService.ACTION_START
-            }
-            ContextCompat.startForegroundService(application, intent)
+        if (granted && !uiState.value.isMonitoring) {
+            toggleMonitoring()
         }
     }
 

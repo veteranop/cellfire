@@ -1,9 +1,7 @@
-package com.veteranop.cellfire
+package com.veteranop.cellfire.data.local
 
 import android.content.Context
 import androidx.room.Room
-import com.veteranop.cellfire.data.local.AppDatabase
-import com.veteranop.cellfire.data.local.entities.DiscoveredPciDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn

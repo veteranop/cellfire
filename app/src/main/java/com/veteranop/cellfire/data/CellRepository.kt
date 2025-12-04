@@ -1,5 +1,10 @@
-package com.veteranop.cellfire
+package com.veteranop.cellfire.data
 
+import com.veteranop.cellfire.data.local.DiscoveredPciDao
+import com.veteranop.cellfire.data.model.Cell
+import com.veteranop.cellfire.data.model.CellFireUiState
+import com.veteranop.cellfire.data.model.DiscoveredPci
+import com.veteranop.cellfire.data.model.SignalHistoryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,21 +63,21 @@ class CellRepository @Inject constructor(
 
     fun updateCarrierForPci(pci: Int, band: String, newCarrier: String) {
         repositoryScope.launch {
-            val discovered = discoveredPciDao.getDiscoveredPci(pci, band)
+            val discovered = discoveredPciDao.getByPci(pci)
             if (discovered != null) {
                 discovered.carrier = newCarrier
-                discoveredPciDao.insert(discovered)
+                discoveredPciDao.update(discovered)
             }
         }
     }
 
     fun updatePciFlags(pci: Int, band: String, isIgnored: Boolean? = null, isTargeted: Boolean? = null) {
         repositoryScope.launch {
-            val discovered = discoveredPciDao.getDiscoveredPci(pci, band)
+            val discovered = discoveredPciDao.getByPci(pci)
             if (discovered != null) {
                 isIgnored?.let { discovered.isIgnored = it }
                 isTargeted?.let { discovered.isTargeted = it }
-                discoveredPciDao.insert(discovered)
+                discoveredPciDao.update(discovered)
             }
         }
     }
@@ -80,11 +85,11 @@ class CellRepository @Inject constructor(
     private suspend fun updateDiscoveredPcis(cells: List<Cell>) {
         val now = System.currentTimeMillis()
         for (cell in cells) {
-            val existingPci = discoveredPciDao.getDiscoveredPci(cell.pci, cell.band)
+            val existingPci = discoveredPciDao.getByPci(cell.pci)
             if (existingPci != null) {
                 existingPci.discoveryCount++
                 existingPci.lastSeen = now
-                discoveredPciDao.insert(existingPci)
+                discoveredPciDao.update(existingPci)
             } else {
                 discoveredPciDao.insert(
                     DiscoveredPci(
