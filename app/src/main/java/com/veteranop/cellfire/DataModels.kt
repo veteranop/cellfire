@@ -86,5 +86,6 @@ data class CellFireUiState(
     val selectedCarriers: Set<String> = setOf("T-Mobile", "Verizon", "AT&T", "Dish", "FirstNet", "US Cellular"),
     val registeredCarrierName: String = "Unknown",
     val discoveredPcis: List<DiscoveredPci> = emptyList(),
-    val signalHistory: Map<Pair<Int, Int>, List<SignalHistoryPoint>> = emptyMap()
+    val signalHistory: Map<Pair<Int, Int>, List<SignalHistoryPoint>> = emptyMap(),
+    val isRefreshing: Boolean = false
 )
