@@ -512,9 +512,10 @@ fun RawLogScreen(vm: CellFireViewModel) {
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize().alpha(0.4f)
             )
-            LazyColumn(modifier = Modifier.padding(innerPadding).fillMaxSize().padding(16.dp)) {
-                items(state.logLines) { line ->
-                    Text(text = line, style = MaterialTheme.typography.bodySmall, color = Color.White)
+            LazyColumn(modifier = Modifier.padding(innerPadding).fillMaxSize().padding(16.dp), reverseLayout = true) {
+                items(state.logLines) { log ->
+                    val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(log.timestamp))
+                    Text(text = "[$timestamp] ${log.message}", style = MaterialTheme.typography.bodySmall, color = Color.White)
                 }
             }
         }

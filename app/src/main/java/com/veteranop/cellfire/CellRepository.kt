@@ -47,7 +47,13 @@ class CellRepository @Inject constructor(
     }
 
     fun addLogLine(logLine: String) {
-        _uiState.update { it.copy(logLines = (listOf(logLine) + it.logLines).take(200)) }
+        val now = System.currentTimeMillis()
+        val newEntry = LogEntry(now, logLine)
+        _uiState.update { currentState ->
+            val oneMinuteAgo = now - 60_000
+            val updatedLogs = (listOf(newEntry) + currentState.logLines).filter { it.timestamp >= oneMinuteAgo }
+            currentState.copy(logLines = updatedLogs)
+        }
     }
 
     fun clearLog() {
