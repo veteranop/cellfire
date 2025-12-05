@@ -78,11 +78,13 @@ data class DiscoveredPci(
 
 data class SignalHistoryPoint(val timestamp: Long, val rsrp: Int, val sinr: Int)
 
+data class LogEntry(val timestamp: Long, val message: String)
+
 data class CellFireUiState(
     val allPermissionsGranted: Boolean = false,
     val isMonitoring: Boolean = false,
     val cells: List<Cell> = emptyList(),
-    val logLines: List<String> = emptyList(),
+    val logLines: List<LogEntry> = emptyList(),
     val selectedCarriers: Set<String> = setOf("T-Mobile", "Verizon", "AT&T", "Dish", "FirstNet", "US Cellular"),
     val registeredCarrierName: String = "Unknown",
     val discoveredPcis: List<DiscoveredPci> = emptyList(),
