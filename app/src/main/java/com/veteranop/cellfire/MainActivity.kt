@@ -46,6 +46,8 @@ import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.Entry
 import com.github.mikephil.charting.data.LineData
 import com.github.mikephil.charting.data.LineDataSet
+import com.google.accompanist.swiperefresh.SwipeRefresh
+import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
 import com.veteranop.cellfire.ui.theme.CellFireTheme
 import dagger.hilt.android.AndroidEntryPoint
 import org.osmdroid.config.Configuration
@@ -215,35 +217,40 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                     !isIgnored
                 }
 
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(filteredCells, key = { "${it.pci}-${it.arfcn}" }) { cell ->
-                        val discoveredPci = state.discoveredPcis.find { it.pci == cell.pci && it.band == cell.band }
-                        val cellColor = when (cell.carrier.lowercase()) {
-                            "t-mobile", "t-mobile (low-band)" -> Color(0xFFE20074)
-                            "verizon", "verizon (b5)" -> Color(0xFFCC0000)
-                            "at&t" -> Color(0xFF00A8E8)
-                            "firstnet" -> Color.Black
-                            "dish wireless" -> Color(0xFFFF6200)
-                            else -> Color.DarkGray
-                        }
-                        val finalColor = if (discoveredPci?.isTargeted == true) Color.Cyan else cellColor
+                SwipeRefresh(
+                    state = rememberSwipeRefreshState(state.isRefreshing),
+                    onRefresh = { vm.refresh() },
+                ) {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(filteredCells, key = { "${it.pci}-${it.arfcn}" }) { cell ->
+                            val discoveredPci = state.discoveredPcis.find { it.pci == cell.pci && it.band == cell.band }
+                            val cellColor = when (cell.carrier.lowercase()) {
+                                "t-mobile", "t-mobile (low-band)" -> Color(0xFFE20074)
+                                "verizon", "verizon (b5)" -> Color(0xFFCC0000)
+                                "at&t" -> Color(0xFF00A8E8)
+                                "firstnet" -> Color.Black
+                                "dish wireless" -> Color(0xFFFF6200)
+                                else -> Color.DarkGray
+                            }
+                            val finalColor = if (discoveredPci?.isTargeted == true) Color.Cyan else cellColor
 
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(finalColor.copy(alpha = 0.4f))
-                                .clickable { navController.navigate("detail/${cell.pci}/${cell.arfcn}") }
-                                .padding(12.dp)
-                        ) {
-                            Text(text = cell.carrier.uppercase(), modifier = Modifier.weight(1.6f), fontWeight = if (cell.isRegistered) FontWeight.ExtraBold else FontWeight.Normal, color = Color.White)
-                            Text(text = cell.band, modifier = Modifier.weight(0.8f), color = Color.White)
-                            Text(text = cell.pci.toString(), modifier = Modifier.weight(0.8f), color = Color.White)
-                            Text(
-                                text = cell.signalStrength.toString(),
-                                modifier = Modifier.weight(1f),
-                                color = if (cell.signalStrength > -85) Color.Green else if (cell.signalStrength > -100) Color.Yellow else Color.Red
-                            )
-                            Text(text = cell.signalQuality.toString(), modifier = Modifier.weight(1f), color = Color.White)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(finalColor.copy(alpha = 0.4f))
+                                    .clickable { navController.navigate("detail/${cell.pci}/${cell.arfcn}") }
+                                    .padding(12.dp)
+                            ) {
+                                Text(text = cell.carrier.uppercase(), modifier = Modifier.weight(1.6f), fontWeight = if (cell.isRegistered) FontWeight.ExtraBold else FontWeight.Normal, color = Color.White)
+                                Text(text = cell.band, modifier = Modifier.weight(0.8f), color = Color.White)
+                                Text(text = cell.pci.toString(), modifier = Modifier.weight(0.8f), color = Color.White)
+                                Text(
+                                    text = cell.signalStrength.toString(),
+                                    modifier = Modifier.weight(1f),
+                                    color = if (cell.signalStrength > -85) Color.Green else if (cell.signalStrength > -100) Color.Yellow else Color.Red
+                                )
+                                Text(text = cell.signalQuality.toString(), modifier = Modifier.weight(1f), color = Color.White)
+                            }
                         }
                     }
                 }

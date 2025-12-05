@@ -4,10 +4,12 @@ import android.app.Application
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
@@ -49,6 +51,17 @@ class CellFireViewModel @Inject constructor(
         }
         ContextCompat.startForegroundService(application, intent)
         _deepScanActive.value = enable
+    }
+
+    fun refresh() {
+        viewModelScope.launch {
+            cellRepository.setRefreshing(true)
+            val intent = Intent(application, CellScanService::class.java).apply {
+                action = CellScanService.ACTION_REFRESH
+            }
+            ContextCompat.startForegroundService(application, intent)
+            // The service will set refreshing to false when it's done
+        }
     }
 
     fun updateCarrier(pci: Int, band: String, newCarrier: String) {

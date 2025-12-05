@@ -27,7 +27,7 @@ class CellRepository @Inject constructor(
     }
 
     fun updateCells(newCells: List<Cell>) {
-        _uiState.update { it.copy(cells = newCells) }
+        _uiState.update { it.copy(cells = newCells, isRefreshing = false) }
         addSignalHistory(newCells)
         repositoryScope.launch {
             updateDiscoveredPcis(newCells)
@@ -40,6 +40,10 @@ class CellRepository @Inject constructor(
 
     fun setPermissionsGranted(areGranted: Boolean) {
         _uiState.update { it.copy(allPermissionsGranted = areGranted) }
+    }
+
+    fun setRefreshing(isRefreshing: Boolean) {
+        _uiState.update { it.copy(isRefreshing = isRefreshing) }
     }
 
     fun addLogLine(logLine: String) {

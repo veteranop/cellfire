@@ -98,6 +98,9 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
     implementation("com.google.firebase:firebase-analytics-ktx")
 
+    // Accompanist
+    implementation("com.google.accompanist:accompanist-swiperefresh:0.24.13-rc")
+
     // Testing
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

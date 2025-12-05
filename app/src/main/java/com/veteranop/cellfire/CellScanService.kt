@@ -29,6 +29,7 @@ class CellScanService : LifecycleService() {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_TOGGLE_DEEP = "ACTION_TOGGLE_DEEP"
+        const val ACTION_REFRESH = "ACTION_REFRESH"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "cellfire_scan"
     }
@@ -47,6 +48,7 @@ class CellScanService : LifecycleService() {
                 val enable = intent.getBooleanExtra("enable", true)
                 if (enable) startDeepScan() else stopDeepScan()
             }
+            ACTION_REFRESH -> refresh()
         }
         return START_STICKY
     }
@@ -55,10 +57,10 @@ class CellScanService : LifecycleService() {
         if (regularJob?.isActive == true) return
         cellRepository.setServiceActive(true)
 
-        regularJob = lifecycleScope.launch {
+        regularJob = lifecycleScope.launch(Dispatchers.IO) {
             while (isActive) {
                 updateFromAllCellInfo()
-                delay(1800)
+                delay(5000L)
             }
         }
 
@@ -90,6 +92,15 @@ class CellScanService : LifecycleService() {
         cellRepository.setServiceActive(false)
         stopForeground(true)
         stopSelf()
+    }
+
+    private fun refresh() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            updateFromAllCellInfo()
+            if (deepScanJob?.isActive == true) {
+                performDeepScan()
+            }
+        }
     }
 
     @SuppressLint("MissingPermission")
