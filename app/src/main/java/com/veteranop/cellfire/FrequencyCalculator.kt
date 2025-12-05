@@ -2,7 +2,6 @@ package com.veteranop.cellfire
 
 import android.content.Context
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.decodeFromString
 
 object FrequencyCalculator {
 
@@ -22,8 +21,8 @@ object FrequencyCalculator {
         val dlOffset = earfcn - band.dl.split("-")[0].toInt()
         val ulOffset = earfcn - band.ul.split("-")[0].toInt()
 
-        val dlFreq = (band.likely_bw as? Double)?.plus(0.1 * dlOffset) ?: 0.0
-        val ulFreq = (band.likely_bw as? Double)?.plus(0.1 * ulOffset) ?: 0.0
+        val dlFreq = band.likely_bw.plus(0.1 * dlOffset)
+        val ulFreq = band.likely_bw.plus(0.1 * ulOffset)
 
         return Pair(dlFreq, ulFreq)
     }
@@ -33,8 +32,8 @@ object FrequencyCalculator {
         val dlOffset = nrarfcn - band.dl.split("-")[0].toInt()
         val ulOffset = nrarfcn - band.ul.split("-")[0].toInt()
 
-        val dlFreq = (band.likely_bw as? Double)?.plus(0.05 * dlOffset) ?: 0.0
-        val ulFreq = (band.likely_bw as? Double)?.plus(0.05 * ulOffset) ?: 0.0
+        val dlFreq = band.likely_bw.plus(0.05 * dlOffset)
+        val ulFreq = band.likely_bw.plus(0.05 * ulOffset)
 
         return Pair(dlFreq, ulFreq)
     }
