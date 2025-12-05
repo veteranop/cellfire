@@ -311,6 +311,7 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     Text("Type: ${currentCell.type}", color = Color.White)
                     Text("RSRP: ${currentCell.signalStrength}", color = Color.White)
                     Text("SINR: ${currentCell.signalQuality}", color = Color.White)
+                    Text("RSRQ: ${currentCell.rsrq}", color = Color.White)
                     Text("TAC: ${currentCell.tac}", color = Color.White)
                     Text("Registered: ${currentCell.isRegistered}", color = Color.White)
                     val freq = when (currentCell) {
@@ -438,6 +439,7 @@ fun SignalChart(history: List<SignalHistoryPoint>) {
 
                 val rsrpEntries = history.mapIndexed { index, point -> Entry(index.toFloat(), point.rsrp.toFloat()) }
                 val sinrEntries = history.mapIndexed { index, point -> Entry(index.toFloat(), point.sinr.toFloat()) }
+                val rsrqEntries = history.mapIndexed { index, point -> Entry(index.toFloat(), point.rsrq.toFloat()) }
 
                 val rsrpDataSet = LineDataSet(rsrpEntries, "RSRP (dBm)").apply {
                     color = AndroidColor.CYAN
@@ -455,7 +457,15 @@ fun SignalChart(history: List<SignalHistoryPoint>) {
                     isHighlightEnabled = false
                 }
 
-                chart.data = LineData(rsrpDataSet, sinrDataSet)
+                val rsrqDataSet = LineDataSet(rsrqEntries, "RSRQ (dB)").apply {
+                    color = AndroidColor.YELLOW
+                    valueTextColor = AndroidColor.TRANSPARENT
+                    setDrawCircles(false)
+                    lineWidth = 2f
+                    isHighlightEnabled = false
+                }
+
+                chart.data = LineData(rsrpDataSet, sinrDataSet, rsrqDataSet)
                 chart.xAxis.labelCount = 5
                 chart.notifyDataSetChanged()
                 chart.invalidate()

@@ -238,12 +238,15 @@ class CellScanService : LifecycleService() {
                     carrier = pciToCarrier(pci)
                 }
 
+                val snr = if (strength.rssnr == Int.MAX_VALUE) 0 else strength.rssnr
+
                 LteCell(
                     pci = pci,
                     arfcn = identity.earfcn,
                     band = earfcnToLteBand(identity.earfcn),
                     signalStrength = strength.rsrp,
-                    signalQuality = strength.rsrq,
+                    signalQuality = snr,
+                    rsrq = strength.rsrq,
                     isRegistered = info.isRegistered,
                     carrier = carrier,
                     tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac
@@ -267,12 +270,15 @@ class CellScanService : LifecycleService() {
                     carrier = pciToCarrier(pci)
                 }
 
+                val snr = if (strength.csiSinr == Int.MAX_VALUE) 0 else strength.csiSinr
+
                 NrCell(
                     pci = pci,
                     arfcn = identity.nrarfcn,
                     band = nrarfcnToNrBand(identity.nrarfcn),
                     signalStrength = strength.csiRsrp,
-                    signalQuality = strength.csiRsrq,
+                    signalQuality = snr,
+                    rsrq = strength.csiRsrq,
                     isRegistered = info.isRegistered,
                     carrier = carrier,
                     tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac
