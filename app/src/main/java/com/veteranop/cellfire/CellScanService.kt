@@ -64,7 +64,6 @@ class CellScanService : LifecycleService() {
             }
         }
 
-        // Deep scan ON by default — this is what you want in the field
         startDeepScan()
     }
 
@@ -72,11 +71,11 @@ class CellScanService : LifecycleService() {
         if (deepScanJob?.isActive == true) return
         deepScanJob = lifecycleScope.launch(Dispatchers.IO) {
             while (isActive) {
+                updateNotification("Deep Scan: Searching...")
                 performDeepScan()
-                delay(5000L) // ← Forces full neighbor scan every 5 seconds
+                delay(35000L) // 30s scan + 5s delay
             }
         }
-        updateNotification("Deep Scan ACTIVE – 5s")
     }
 
     private fun stopDeepScan() {
@@ -96,17 +95,15 @@ class CellScanService : LifecycleService() {
 
     private fun refresh() {
         lifecycleScope.launch(Dispatchers.IO) {
+            cellRepository.setRefreshing(true)
             updateFromAllCellInfo()
-            if (deepScanJob?.isActive == true) {
-                performDeepScan()
-            }
         }
     }
 
     @SuppressLint("MissingPermission")
     private fun performDeepScan() {
         currentScan?.stopScan()
-        if (Build.VERSION.SDK_INT < 28) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
             updateFromAllCellInfo()
             return
         }
@@ -119,30 +116,67 @@ class CellScanService : LifecycleService() {
         val request = NetworkScanRequest(
             NetworkScanRequest.SCAN_TYPE_ONE_SHOT,
             specifiers,
-            45, 0, false, 1, null
+            5,      // searchPeriodicity - ignored for one-shot
+            30,     // maxSearchTime - 30 seconds
+            true, // incrementalResults
+            5,      // incrementalResultsPeriodicity - 5 seconds
+            null
         )
 
         try {
             currentScan = telephonyManager.requestNetworkScan(request, mainExecutor, object : TelephonyScanManager.NetworkScanCallback() {
-                override fun onResults(results: MutableList<CellInfo>?) {
-                    results?.takeIf { it.isNotEmpty() }?.let { list ->
+                override fun onResults(results: MutableList<CellInfo>) {
+                    results.takeIf { it.isNotEmpty() }?.let { list ->
                         list.forEach { cellRepository.addLogLine(it.toString()) }
                         val cells = list.mapNotNull { parseCellInfo(it) }
                         cellRepository.updateCells(cells)
-                        updateNotification("Deep Scan: ${cells.size} towers")
+                        updateNotification("Deep Scan: Found ${cells.size} new towers")
                     }
                 }
 
-                override fun onComplete() {}
-                override fun onError(error: Int) { updateFromAllCellInfo() }
+                override fun onComplete() {
+                    currentScan = null
+                    updateNotification("Deep Scan: Cycle complete")
+                }
+
+                override fun onError(error: Int) {
+                    currentScan = null
+                    updateFromAllCellInfo()
+                    updateNotification("Deep Scan: Error")
+                }
             })
         } catch (e: Exception) {
+            currentScan = null
             updateFromAllCellInfo()
         }
     }
 
     @SuppressLint("MissingPermission")
     private fun updateFromAllCellInfo() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                telephonyManager.requestCellInfoUpdate(mainExecutor, object : TelephonyManager.CellInfoCallback() {
+                    override fun onCellInfo(cellInfo: MutableList<CellInfo>) {
+                        cellInfo.forEach { cellRepository.addLogLine(it.toString()) }
+                        val cells = cellInfo.mapNotNull { parseCellInfo(it) }
+                        cellRepository.updateCells(cells)
+                    }
+
+                    override fun onError(errorCode: Int, detail: Throwable?) {
+                        getLegacyCellInfo()
+                    }
+                })
+            } catch (e: SecurityException) {
+                getLegacyCellInfo()
+            }
+        } else {
+            getLegacyCellInfo()
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    @Suppress("DEPRECATION")
+    private fun getLegacyCellInfo() {
         val list = telephonyManager.allCellInfo ?: return
         list.forEach { cellRepository.addLogLine(it.toString()) }
         val cells = list.mapNotNull { parseCellInfo(it) }
