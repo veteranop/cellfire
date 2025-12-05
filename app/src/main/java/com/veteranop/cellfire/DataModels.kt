@@ -64,6 +64,34 @@ data class NrCell(
     override val type: String = "5G NR"
 }
 
+data class WcdmaCell(
+    override val pci: Int,
+    override val arfcn: Int,
+    override val band: String,
+    override val signalStrength: Int,
+    override val signalQuality: Int,
+    override val isRegistered: Boolean,
+    override var carrier: String,
+    override val tac: Int,
+    override val lastSeen: Long = System.currentTimeMillis()
+) : Cell() {
+    override val type: String = "WCDMA"
+}
+
+data class GsmCell(
+    override val pci: Int,
+    override val arfcn: Int,
+    override val band: String,
+    override val signalStrength: Int,
+    override val signalQuality: Int,
+    override val isRegistered: Boolean,
+    override var carrier: String,
+    override val tac: Int,
+    override val lastSeen: Long = System.currentTimeMillis()
+) : Cell() {
+    override val type: String = "GSM"
+}
+
 @Entity(tableName = "discovered_pcis")
 data class DiscoveredPci(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,

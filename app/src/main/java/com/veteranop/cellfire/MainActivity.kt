@@ -67,8 +67,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        FrequencyCalculator.init(applicationContext)
-
         Configuration.getInstance().load(applicationContext, getSharedPreferences("osmdroid", MODE_PRIVATE))
         Configuration.getInstance().userAgentValue = "CellFire-VeteranOp/1.0"
 
@@ -316,14 +314,15 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     Text("TAC: ${currentCell.tac}", color = Color.White)
                     Text("Registered: ${currentCell.isRegistered}", color = Color.White)
                     val freq = when (currentCell) {
-                        is LteCell -> FrequencyCalculator.getLteFrequency(currentCell.arfcn)
-                        is NrCell -> FrequencyCalculator.getNrFrequency(currentCell.arfcn)
+                        is LteCell -> FrequencyCalculator.earfcnToFrequency(currentCell.arfcn)
                         else -> null
                     }
                     if (freq != null) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text("DL Freq: ${String.format("%.1f", freq.first)} MHz", color = Color.White)
-                        Text("UL Freq: ${String.format("%.1f", freq.second)} MHz", color = Color.White)
+                        if (freq.second > 0) {
+                            Text("UL Freq: ${String.format("%.1f", freq.second)} MHz", color = Color.White)
+                        }
                     }
                 }
             }

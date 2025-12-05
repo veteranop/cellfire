@@ -109,6 +109,8 @@ class CellScanService : LifecycleService() {
         }
 
         val specifiers = arrayOf(
+            RadioAccessSpecifier(AccessNetworkConstants.AccessNetworkType.GERAN, null, null),
+            RadioAccessSpecifier(AccessNetworkConstants.AccessNetworkType.UTRAN, null, null),
             RadioAccessSpecifier(AccessNetworkConstants.AccessNetworkType.EUTRAN, null, null),
             RadioAccessSpecifier(AccessNetworkConstants.AccessNetworkType.NGRAN, null, null)
         )
@@ -274,6 +276,74 @@ class CellScanService : LifecycleService() {
                     isRegistered = info.isRegistered,
                     carrier = carrier,
                     tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac
+                )
+            }
+            is CellInfoWcdma -> {
+                val identity = info.cellIdentity
+                val strength = info.cellSignalStrength
+
+                val mcc: Int?
+                val mnc: Int?
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    mcc = identity.mccString?.toIntOrNull()
+                    mnc = identity.mncString?.toIntOrNull()
+                } else {
+                    @Suppress("DEPRECATION")
+                    mcc = identity.mcc
+                    @Suppress("DEPRECATION")
+                    mnc = identity.mnc
+                }
+
+                val carrier = if (mcc != null && mnc != null && mcc != Int.MAX_VALUE && mnc != Int.MAX_VALUE) {
+                    plmnToCarrier(mcc, mnc)
+                } else {
+                    "Unknown"
+                }
+
+                WcdmaCell(
+                    pci = identity.psc,
+                    arfcn = identity.uarfcn,
+                    band = "B?", // WCDMA band is not directly available
+                    signalStrength = strength.dbm,
+                    signalQuality = 0, // Not available for WCDMA
+                    isRegistered = info.isRegistered,
+                    carrier = carrier,
+                    tac = if (identity.lac == Int.MAX_VALUE) 0 else identity.lac
+                )
+            }
+            is CellInfoGsm -> {
+                val identity = info.cellIdentity
+                val strength = info.cellSignalStrength
+
+                val mcc: Int?
+                val mnc: Int?
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    mcc = identity.mccString?.toIntOrNull()
+                    mnc = identity.mncString?.toIntOrNull()
+                } else {
+                    @Suppress("DEPRECATION")
+                    mcc = identity.mcc
+                    @Suppress("DEPRECATION")
+                    mnc = identity.mnc
+                }
+
+                val carrier = if (mcc != null && mnc != null && mcc != Int.MAX_VALUE && mnc != Int.MAX_VALUE) {
+                    plmnToCarrier(mcc, mnc)
+                } else {
+                    "Unknown"
+                }
+
+                GsmCell(
+                    pci = identity.bsic,
+                    arfcn = identity.arfcn,
+                    band = "B?", // GSM band is not directly available
+                    signalStrength = strength.dbm,
+                    signalQuality = 0, // Not available for GSM
+                    isRegistered = info.isRegistered,
+                    carrier = carrier,
+                    tac = if (identity.lac == Int.MAX_VALUE) 0 else identity.lac
                 )
             }
             else -> null
