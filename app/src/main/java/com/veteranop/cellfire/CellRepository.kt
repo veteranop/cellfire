@@ -126,7 +126,7 @@ class CellRepository @Inject constructor(
             for (cell in cells) {
                 val key = Pair(cell.pci, cell.arfcn)
                 val history = newHistory.getOrDefault(key, emptyList()).toMutableList()
-                history.add(SignalHistoryPoint(now, cell.signalStrength, cell.signalQuality))
+                history.add(SignalHistoryPoint(now, cell.signalStrength, cell.signalQuality, cell.rsrq))
 
                 newHistory[key] = history.takeLast(100)
             }

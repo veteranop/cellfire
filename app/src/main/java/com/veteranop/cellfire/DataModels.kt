@@ -29,6 +29,7 @@ sealed class Cell {
     abstract val band: String
     abstract val signalStrength: Int
     abstract val signalQuality: Int
+    abstract val rsrq: Int
     abstract val isRegistered: Boolean
     abstract var carrier: String
     abstract val type: String
@@ -42,6 +43,7 @@ data class LteCell(
     override val band: String,
     override val signalStrength: Int,
     override val signalQuality: Int,
+    override val rsrq: Int,
     override val isRegistered: Boolean,
     override var carrier: String,
     override val tac: Int,
@@ -56,6 +58,7 @@ data class NrCell(
     override val band: String,
     override val signalStrength: Int,
     override val signalQuality: Int,
+    override val rsrq: Int,
     override val isRegistered: Boolean,
     override var carrier: String,
     override val tac: Int,
@@ -70,6 +73,7 @@ data class WcdmaCell(
     override val band: String,
     override val signalStrength: Int,
     override val signalQuality: Int,
+    override val rsrq: Int = 0,
     override val isRegistered: Boolean,
     override var carrier: String,
     override val tac: Int,
@@ -84,6 +88,7 @@ data class GsmCell(
     override val band: String,
     override val signalStrength: Int,
     override val signalQuality: Int,
+    override val rsrq: Int = 0,
     override val isRegistered: Boolean,
     override var carrier: String,
     override val tac: Int,
@@ -104,7 +109,7 @@ data class DiscoveredPci(
     var isTargeted: Boolean = false
 )
 
-data class SignalHistoryPoint(val timestamp: Long, val rsrp: Int, val sinr: Int)
+data class SignalHistoryPoint(val timestamp: Long, val rsrp: Int, val sinr: Int, val rsrq: Int)
 
 data class LogEntry(val timestamp: Long, val message: String)
 
