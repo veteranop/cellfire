@@ -2,6 +2,7 @@ package com.veteranop.cellfire
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color as AndroidColor
 import android.os.Bundle
@@ -34,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import androidx.navigation.NavType
@@ -120,7 +122,7 @@ fun StartScreen(navController: NavController) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Image(painter = painterResource(id = R.drawable.app_name), contentDescription = "app logo")
-            Text("v1.0.0.4.alpha", style = MaterialTheme.typography.bodyLarge, color = Color.White)
+            Text("v1.0.1.2.export_alpha", style = MaterialTheme.typography.bodyLarge, color = Color.White)
             Spacer(modifier = Modifier.height(32.dp))
             Button(onClick = { navController.navigate("scan") }, modifier = Modifier.fillMaxWidth()) { Text("Start Scan") }
             Spacer(modifier = Modifier.height(8.dp))
@@ -253,7 +255,7 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                     }
                 }
 
-                Text(text = "v1.0.0.4.alpha • VeteranOp Industries", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
+                Text(text = "v1.0.1.2.export_alpha • VeteranOp Industries", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
             }
         }
     }
@@ -314,6 +316,8 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     Text("RSRQ: ${currentCell.rsrq}", color = Color.White)
                     Text("TAC: ${currentCell.tac}", color = Color.White)
                     Text("Registered: ${currentCell.isRegistered}", color = Color.White)
+                    Text("Latitude: ${currentCell.latitude}", color = Color.White)
+                    Text("Longitude: ${currentCell.longitude}", color = Color.White)
                     val freq = when (currentCell) {
                         is LteCell -> FrequencyCalculator.earfcnToFrequency(currentCell.arfcn)
                         else -> null
@@ -534,8 +538,21 @@ fun RawLogScreen(vm: CellFireViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PciTableScreen(navController: NavController, vm: CellFireViewModel) {
+    val context = LocalContext.current
     val state by vm.uiState.collectAsState()
     val carriers = state.discoveredPcis.map { it.carrier }.distinct()
+
+    LaunchedEffect(Unit) {
+        vm.exportEvent.collect { file ->
+            val uri = FileProvider.getUriForFile(context, "com.veteranop.cellfire.provider", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/csv"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "Export CSV"))
+        }
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -543,6 +560,9 @@ fun PciTableScreen(navController: NavController, vm: CellFireViewModel) {
             TopAppBar(
                 title = { Text("Discovered PCIs by Carrier", color = Color.White) },
                 actions = {
+                    Button(onClick = { vm.exportAllWithHistory() }) {
+                        Text("Export All")
+                    }
                     Button(onClick = { vm.clearPciHistory() }) {
                         Text("Clear All")
                     }
@@ -593,8 +613,21 @@ fun PciTableScreen(navController: NavController, vm: CellFireViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PciCarrierListScreen(vm: CellFireViewModel, carrier: String) {
+    val context = LocalContext.current
     val state by vm.uiState.collectAsState()
     val pcis = state.discoveredPcis.filter { it.carrier == carrier }
+
+    LaunchedEffect(Unit) {
+        vm.exportEvent.collect { file ->
+            val uri = FileProvider.getUriForFile(context, "com.veteranop.cellfire.provider", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/csv"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "Export CSV"))
+        }
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -610,6 +643,11 @@ fun PciCarrierListScreen(vm: CellFireViewModel, carrier: String) {
                         else -> Color.DarkGray
                     }
                     Text(carrier, style = MaterialTheme.typography.headlineLarge, color = cellColor)
+                },
+                actions = {
+                    Button(onClick = { vm.exportCarrierWithHistory(carrier) }) {
+                        Text("Export")
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
             )
@@ -701,7 +739,7 @@ fun AboutScreen() {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("CellFire", style = MaterialTheme.typography.headlineLarge, color = Color.White)
-        Text("v1.0.0.4.alpha", style = MaterialTheme.typography.bodyLarge, color = Color.White)
+        Text("v1.0.1.2.export_alpha", style = MaterialTheme.typography.bodyLarge, color = Color.White)
         Spacer(modifier = Modifier.height(16.dp))
         Text("Made by VeteranOp LLC", style = MaterialTheme.typography.bodyMedium, color = Color.White)
     }

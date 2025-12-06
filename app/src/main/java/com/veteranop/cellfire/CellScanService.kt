@@ -7,10 +7,12 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Looper
 import android.telephony.*
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
+import com.google.android.gms.location.*
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
 import javax.inject.Inject
@@ -24,6 +26,9 @@ class CellScanService : LifecycleService() {
     private var regularJob: Job? = null
     private var deepScanJob: Job? = null
     private var currentScan: NetworkScan? = null
+    private lateinit var fusedLocationClient: FusedLocationProviderClient
+    private var lastLatitude: Double = 0.0
+    private var lastLongitude: Double = 0.0
 
     companion object {
         const val ACTION_START = "ACTION_START"
@@ -36,8 +41,10 @@ class CellScanService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createNotification("CellFire Active"))
+        startLocationUpdates()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -78,6 +85,26 @@ class CellScanService : LifecycleService() {
         }
     }
 
+    @SuppressLint("MissingPermission")
+    private fun startLocationUpdates() {
+        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000)
+            .setWaitForAccurateLocation(false)
+            .setMinUpdateIntervalMillis(2000)
+            .setMaxUpdateDelayMillis(10000)
+            .build()
+
+        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
+    }
+
+    private val locationCallback = object : LocationCallback() {
+        override fun onLocationResult(locationResult: LocationResult) {
+            locationResult.lastLocation?.let {
+                lastLatitude = it.latitude
+                lastLongitude = it.longitude
+            }
+        }
+    }
+
     private fun stopDeepScan() {
         deepScanJob?.cancel()
         currentScan?.stopScan()
@@ -88,6 +115,7 @@ class CellScanService : LifecycleService() {
     private fun stopScanning() {
         regularJob?.cancel()
         stopDeepScan()
+        fusedLocationClient.removeLocationUpdates(locationCallback)
         cellRepository.setServiceActive(false)
         stopForeground(true)
         stopSelf()
@@ -249,7 +277,9 @@ class CellScanService : LifecycleService() {
                     rsrq = strength.rsrq,
                     isRegistered = info.isRegistered,
                     carrier = carrier,
-                    tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac
+                    tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac,
+                    latitude = lastLatitude,
+                    longitude = lastLongitude
                 )
             }
             is CellInfoNr -> {
@@ -281,7 +311,9 @@ class CellScanService : LifecycleService() {
                     rsrq = strength.csiRsrq,
                     isRegistered = info.isRegistered,
                     carrier = carrier,
-                    tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac
+                    tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac,
+                    latitude = lastLatitude,
+                    longitude = lastLongitude
                 )
             }
             is CellInfoWcdma -> {
@@ -315,7 +347,9 @@ class CellScanService : LifecycleService() {
                     signalQuality = 0, // Not available for WCDMA
                     isRegistered = info.isRegistered,
                     carrier = carrier,
-                    tac = if (identity.lac == Int.MAX_VALUE) 0 else identity.lac
+                    tac = if (identity.lac == Int.MAX_VALUE) 0 else identity.lac,
+                    latitude = lastLatitude,
+                    longitude = lastLongitude
                 )
             }
             is CellInfoGsm -> {
@@ -349,7 +383,9 @@ class CellScanService : LifecycleService() {
                     signalQuality = 0, // Not available for GSM
                     isRegistered = info.isRegistered,
                     carrier = carrier,
-                    tac = if (identity.lac == Int.MAX_VALUE) 0 else identity.lac
+                    tac = if (identity.lac == Int.MAX_VALUE) 0 else identity.lac,
+                    latitude = lastLatitude,
+                    longitude = lastLongitude
                 )
             }
             else -> null

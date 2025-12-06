@@ -6,10 +6,16 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import javax.inject.Inject
 
 @HiltViewModel
@@ -22,6 +28,9 @@ class CellFireViewModel @Inject constructor(
 
     private val _deepScanActive = MutableStateFlow(true)
     val deepScanActive: StateFlow<Boolean> = _deepScanActive.asStateFlow()
+
+    private val _exportEvent = Channel<File>(Channel.CONFLATED)
+    val exportEvent: Flow<File> = _exportEvent.receiveAsFlow()
 
     fun onPermissionsResult(granted: Boolean) {
         cellRepository.setPermissionsGranted(granted)
@@ -61,6 +70,84 @@ class CellFireViewModel @Inject constructor(
             }
             ContextCompat.startForegroundService(application, intent)
             // The service will set refreshing to false when it's done
+        }
+    }
+
+    fun exportCarrierWithHistory(carrier: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val cells = uiState.value.cells.filter { it.carrier.equals(carrier, ignoreCase = true) }
+            val historyMap = uiState.value.signalHistory
+
+            val csv = buildString {
+                appendLine("Timestamp,Latitude,Longitude,Carrier,Band,PCI,EARFCN,RSRP_dBm,SINR_dB,RSRQ_dB,Registered,TAC,Type,History_RSRP_List")
+                cells.forEach { cell ->
+                    val key = Pair(cell.pci, cell.arfcn)
+                    val history = historyMap[key]?.joinToString(";") { "${it.rsrp}" } ?: ""
+                    appendLine(
+                        "${System.currentTimeMillis()}," +
+                                "${cell.latitude}," +
+                                "${cell.longitude}," +
+                                "\"${cell.carrier}\"," +
+                                "\"${cell.band}\"," +
+                                "${cell.pci}," +
+                                "${cell.arfcn}," +
+                                "${cell.signalStrength}," +
+                                "${cell.signalQuality}," +
+                                "${cell.rsrq}," +
+                                "${cell.isRegistered}," +
+                                "${cell.tac}," +
+                                "\"${cell.type}\"," +
+                                "\"$history\""
+                    )
+                }
+            }
+
+            val fileName = "CellFire_${carrier.replace(" ", "_")}_${System.currentTimeMillis()}.csv"
+            val file = File(application.getExternalFilesDir(null), fileName)
+            file.writeText(csv)
+
+            withContext(Dispatchers.Main) {
+                _exportEvent.trySend(file)
+            }
+        }
+    }
+
+    fun exportAllWithHistory() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val cells = uiState.value.cells
+            val historyMap = uiState.value.signalHistory
+
+            val csv = buildString {
+                appendLine("Timestamp,Latitude,Longitude,Carrier,Band,PCI,EARFCN,RSRP_dBm,SINR_dB,RSRQ_dB,Registered,TAC,Type,History_RSRP_List")
+                cells.forEach { cell ->
+                    val key = Pair(cell.pci, cell.arfcn)
+                    val history = historyMap[key]?.joinToString(";") { "${it.rsrp}" } ?: ""
+                    appendLine(
+                        "${System.currentTimeMillis()}," +
+                                "${cell.latitude}," +
+                                "${cell.longitude}," +
+                                "\"${cell.carrier}\"," +
+                                "\"${cell.band}\"," +
+                                "${cell.pci}," +
+                                "${cell.arfcn}," +
+                                "${cell.signalStrength}," +
+                                "${cell.signalQuality}," +
+                                "${cell.rsrq}," +
+                                "${cell.isRegistered}," +
+                                "${cell.tac}," +
+                                "\"${cell.type}\"," +
+                                "\"$history\""
+                    )
+                }
+            }
+
+            val fileName = "CellFire_ALL_${System.currentTimeMillis()}.csv"
+            val file = File(application.getExternalFilesDir(null), fileName)
+            file.writeText(csv)
+
+            withContext(Dispatchers.Main) {
+                _exportEvent.trySend(file)
+            }
         }
     }
 
