@@ -73,7 +73,7 @@ class CellFireViewModel @Inject constructor(
                 action = CellScanService.ACTION_REFRESH
             }
             ContextCompat.startForegroundService(application, intent)
-            // The service will set refreshing to false when it's done
+
         }
     }
 
