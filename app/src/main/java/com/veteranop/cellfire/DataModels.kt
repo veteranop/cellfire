@@ -126,6 +126,7 @@ data class LogEntry(val timestamp: Long, val message: String)
 data class CellFireUiState(
     val allPermissionsGranted: Boolean = false,
     val isMonitoring: Boolean = false,
+    val isRecording: Boolean = false,
     val cells: List<Cell> = emptyList(),
     val logLines: List<LogEntry> = emptyList(),
     val selectedCarriers: Set<String> = setOf("T-Mobile", "Verizon", "AT&T", "Dish", "FirstNet", "US Cellular"),

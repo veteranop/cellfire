@@ -78,7 +78,7 @@ class MainActivity : ComponentActivity() {
                     val navController = rememberNavController()
                     val vm: CellFireViewModel = hiltViewModel()
                     NavHost(navController = navController, startDestination = "start") {
-                        composable("start") { StartScreen(navController) }
+                        composable("start") { StartScreen(navController, vm) }
                         composable("scan") { ScanScreen(navController, vm) }
                         composable(
                             "detail/{pci}/{arfcn}",
@@ -108,7 +108,9 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun StartScreen(navController: NavController) {
+fun StartScreen(navController: NavController, vm: CellFireViewModel) {
+    val state by vm.uiState.collectAsState()
+
     Box(modifier = Modifier.fillMaxSize()) {
         Image(
             painter = painterResource(id = R.drawable.cfbackground),
@@ -122,9 +124,13 @@ fun StartScreen(navController: NavController) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Image(painter = painterResource(id = R.drawable.app_name), contentDescription = "app logo")
-            Text("v1.0.1.2.export_alpha", style = MaterialTheme.typography.bodyLarge, color = Color.White)
+            Text("v1.0.2.0.record_alpha", style = MaterialTheme.typography.bodyLarge, color = Color.White)
             Spacer(modifier = Modifier.height(32.dp))
             Button(onClick = { navController.navigate("scan") }, modifier = Modifier.fillMaxWidth()) { Text("Start Scan") }
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(onClick = { vm.toggleRecording() }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (state.isRecording) "Stop Recording Session" else "Record Session")
+            }
             Spacer(modifier = Modifier.height(8.dp))
             Button(onClick = { navController.navigate("raw") }, modifier = Modifier.fillMaxWidth()) { Text("Raw Phone Output") }
             Spacer(modifier = Modifier.height(8.dp))
@@ -211,7 +217,9 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                     Text("SNR", Modifier.weight(1f), fontWeight = FontWeight.Bold, color = Color.LightGray)
                 }
 
-                val filteredCells = state.cells.filter {
+                val displayCells = state.cells.distinctBy { it.pci to it.arfcn }
+
+                val filteredCells = displayCells.filter {
                     val discoveredPci = state.discoveredPcis.find { pci -> pci.pci == it.pci && pci.band == it.band }
                     val isIgnored = discoveredPci?.isIgnored ?: false
                     !isIgnored
@@ -222,7 +230,7 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                     onRefresh = { vm.refresh() },
                 ) {
                     LazyColumn(modifier = Modifier.weight(1f)) {
-                        items(filteredCells, key = { "${it.pci}-${it.arfcn}" }) { cell ->
+                        items(filteredCells, key = { "${it.pci}-${it.arfcn}-${it.lastSeen}" }) { cell ->
                             val discoveredPci = state.discoveredPcis.find { it.pci == cell.pci && it.band == cell.band }
                             val cellColor = when (cell.carrier.lowercase()) {
                                 "t-mobile", "t-mobile (low-band)" -> Color(0xFFE20074)
@@ -255,7 +263,7 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                     }
                 }
 
-                Text(text = "v1.0.1.2.export_alpha • VeteranOp Industries", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
+                Text(text = "v1.0.2.0.record_alpha • VeteranOp Industries", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
             }
         }
     }

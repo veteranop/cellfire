@@ -62,6 +62,10 @@ class CellFireViewModel @Inject constructor(
         _deepScanActive.value = enable
     }
 
+    fun toggleRecording() {
+        cellRepository.setRecording(!uiState.value.isRecording)
+    }
+
     fun refresh() {
         viewModelScope.launch {
             cellRepository.setRefreshing(true)
