@@ -101,6 +101,9 @@ dependencies {
     // Accompanist
     implementation("com.google.accompanist:accompanist-swiperefresh:0.24.13-rc")
 
+    // Location
+    implementation("com.google.android.gms:play-services-location:21.2.0")
+
     // Testing
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

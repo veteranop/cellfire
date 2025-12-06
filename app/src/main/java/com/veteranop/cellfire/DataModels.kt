@@ -35,6 +35,8 @@ sealed class Cell {
     abstract val type: String
     abstract val tac: Int
     abstract val lastSeen: Long
+    abstract val latitude: Double
+    abstract val longitude: Double
 }
 
 data class LteCell(
@@ -47,7 +49,9 @@ data class LteCell(
     override val isRegistered: Boolean,
     override var carrier: String,
     override val tac: Int,
-    override val lastSeen: Long = System.currentTimeMillis()
+    override val lastSeen: Long = System.currentTimeMillis(),
+    override val latitude: Double,
+    override val longitude: Double
 ) : Cell() {
     override val type: String = "LTE"
 }
@@ -62,7 +66,9 @@ data class NrCell(
     override val isRegistered: Boolean,
     override var carrier: String,
     override val tac: Int,
-    override val lastSeen: Long = System.currentTimeMillis()
+    override val lastSeen: Long = System.currentTimeMillis(),
+    override val latitude: Double,
+    override val longitude: Double
 ) : Cell() {
     override val type: String = "5G NR"
 }
@@ -77,7 +83,9 @@ data class WcdmaCell(
     override val isRegistered: Boolean,
     override var carrier: String,
     override val tac: Int,
-    override val lastSeen: Long = System.currentTimeMillis()
+    override val lastSeen: Long = System.currentTimeMillis(),
+    override val latitude: Double,
+    override val longitude: Double
 ) : Cell() {
     override val type: String = "WCDMA"
 }
@@ -92,7 +100,9 @@ data class GsmCell(
     override val isRegistered: Boolean,
     override var carrier: String,
     override val tac: Int,
-    override val lastSeen: Long = System.currentTimeMillis()
+    override val lastSeen: Long = System.currentTimeMillis(),
+    override val latitude: Double,
+    override val longitude: Double
 ) : Cell() {
     override val type: String = "GSM"
 }
