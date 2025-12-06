@@ -27,7 +27,14 @@ class CellRepository @Inject constructor(
     }
 
     fun updateCells(newCells: List<Cell>) {
-        _uiState.update { it.copy(cells = newCells, isRefreshing = false) }
+        _uiState.update { currentState ->
+            val updatedCells = if (currentState.isRecording) {
+                currentState.cells + newCells
+            } else {
+                (currentState.cells + newCells).distinctBy { it.pci to it.arfcn }
+            }
+            currentState.copy(cells = updatedCells, isRefreshing = false)
+        }
         addSignalHistory(newCells)
         repositoryScope.launch {
             updateDiscoveredPcis(newCells)
@@ -44,6 +51,10 @@ class CellRepository @Inject constructor(
 
     fun setRefreshing(isRefreshing: Boolean) {
         _uiState.update { it.copy(isRefreshing = isRefreshing) }
+    }
+
+    fun setRecording(isRecording: Boolean) {
+        _uiState.update { it.copy(isRecording = isRecording) }
     }
 
     fun addLogLine(logLine: String) {
@@ -63,6 +74,7 @@ class CellRepository @Inject constructor(
     fun clearPciHistory() {
         repositoryScope.launch {
             discoveredPciDao.clearAll()
+            _uiState.update { it.copy(cells = emptyList(), signalHistory = emptyMap()) }
         }
     }
 
