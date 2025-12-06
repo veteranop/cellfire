@@ -146,10 +146,10 @@ class CellScanService : LifecycleService() {
         val request = NetworkScanRequest(
             NetworkScanRequest.SCAN_TYPE_ONE_SHOT,
             specifiers,
-            5,      // searchPeriodicity - ignored for one-shot
-            30,     // maxSearchTime - 30 seconds
-            true, // incrementalResults
-            5,      // incrementalResultsPeriodicity - 5 seconds
+            5,
+            30,
+            true,
+            5,
             null
         )
 
