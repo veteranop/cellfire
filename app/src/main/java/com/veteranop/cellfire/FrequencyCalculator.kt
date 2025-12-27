@@ -1,71 +1,29 @@
 package com.veteranop.cellfire
 
-import android.content.Context
-import org.json.JSONObject
-
 object FrequencyCalculator {
-    private lateinit var json: JSONObject
 
-    fun init(context: Context) {
-        try {
-            val text = context.assets.open("earfcn_frequencies.json").use { it.reader().readText() }
-            json = JSONObject(text)
-        } catch (e: Exception) {
-            // Handle exceptions, e.g., file not found
-            json = JSONObject() // Initialize with an empty object to avoid crashes
+    fun earfcnToFrequency(earfcn: Int): Pair<Double, Double>? {
+        return when (earfcn) {
+            in 600..1199 -> dlUl(1930.0, 600, 1850.0, earfcn)
+            in 1950..2399 -> dl(2110.0, 1950, earfcn)
+            in 2400..2649 -> dlUl(869.0, 2400, 824.0, earfcn)
+            in 5010..5179 -> dlUl(729.0, 5010, 699.0, earfcn)
+            in 5180..5279 -> dlUl(746.0, 5180, 777.0, earfcn)
+            in 5280..5379 -> dlUl(758.0, 5280, 788.0, earfcn)
+            in 66436..67335 -> dlUl(2110.0, 66436, 1710.0, earfcn)
+            in 68586..68935 -> dlUl(617.0, 68586, 663.0, earfcn)
+            else -> null
         }
     }
 
-    fun getLteFrequency(earfcn: Int): Pair<Double, Double>? {
-        if (!::json.isInitialized || !json.has("lte")) return null
-        val lte = json.optJSONObject("lte") ?: return null
-        val bands = lte.optJSONObject("bands") ?: return null
-
-        for (bandKey in bands.keys()) {
-            val band = bands.optJSONObject(bandKey) ?: continue
-            val dlLow = band.optDouble("dl_low")
-            val dlOffset = band.optInt("dl_offset")
-            val ulLow = band.optDouble("ul_low")
-            val duplexMode = band.optString("duplex", "FDD")
-            val rangeLen = band.optInt("range_len", 600)
-
-            val dlRangeEnd = dlOffset + rangeLen - 1
-
-            if (earfcn in dlOffset..dlRangeEnd) {
-                val dlFreq = dlLow + 0.1 * (earfcn - dlOffset)
-                
-                val ulFreq = if (duplexMode == "FDD") {
-                    // For FDD, calculate the offset from the start of the DL range
-                    // and apply it to the start of the UL frequency range.
-                    val earfcnInBandOffset = earfcn - dlOffset
-                    ulLow + 0.1 * earfcnInBandOffset
-                } else {
-                    // For TDD, UL and DL use the same frequency band.
-                    dlFreq 
-                }
-
-                return dlFreq to ulFreq
-            }
-        }
-        return null
+    private fun dlUl(dlLow: Double, nDlLow: Int, ulLow: Double, earfcn: Int): Pair<Double, Double> {
+        val dl = dlLow + 0.1 * (earfcn - nDlLow)
+        val ul = dl - (dlLow - ulLow)
+        return dl to ul
     }
 
-    fun getNrFrequency(nrarfcn: Int): Pair<Double, Double>? {
-        if (!::json.isInitialized || !json.has("nr")) return null
-        val nr = json.optJSONObject("nr") ?: return null
-        val global = nr.optJSONObject("global") ?: return null
-        
-        val range = when {
-            nrarfcn < 600000 -> global.optJSONObject("low")
-            nrarfcn < 2016667 -> global.optJSONObject("mid")
-            else -> global.optJSONObject("high")
-        } ?: return null
-
-        val fRefLow = range.optDouble("f_ref_low")
-        val nRefOffset = range.optInt("n_ref_offset")
-        val deltaF = range.optDouble("delta_f") / 1000.0 // kHz → MHz
-
-        val fRef = fRefLow + deltaF * (nrarfcn - nRefOffset)
-        return fRef to fRef // TDD has same UL/DL
+    private fun dl(dlLow: Double, nDlLow: Int, earfcn: Int): Pair<Double, Double> {
+        val dl = dlLow + 0.1 * (earfcn - nDlLow)
+        return dl to 0.0
     }
 }
