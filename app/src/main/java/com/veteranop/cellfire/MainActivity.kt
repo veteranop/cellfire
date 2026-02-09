@@ -124,7 +124,7 @@ fun StartScreen(navController: NavController, vm: CellFireViewModel) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Image(painter = painterResource(id = R.drawable.app_name), contentDescription = "app logo")
-            Text("v1.0.2.1.bandwidth_alpha", style = MaterialTheme.typography.bodyLarge, color = Color.White)
+            Text("1.0.0.4_Stable", style = MaterialTheme.typography.bodyLarge, color = Color.White)
             Spacer(modifier = Modifier.height(32.dp))
             Button(onClick = { navController.navigate("scan") }, modifier = Modifier.fillMaxWidth()) { Text("Start Scan") }
             Spacer(modifier = Modifier.height(8.dp))
@@ -253,7 +253,7 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                                 Text(text = cell.carrier.uppercase(), modifier = Modifier.weight(1.6f), fontWeight = if (cell.isRegistered) FontWeight.ExtraBold else FontWeight.Normal, color = Color.White)
                                 Text(text = cell.band, modifier = Modifier.weight(0.8f), color = Color.White)
                                 Text(text = cell.pci.toString(), modifier = Modifier.weight(0.8f), color = Color.White)
-                                Text(text = "${cell.bandwidth}MHz", modifier = Modifier.weight(0.7f), color = Color.White)
+                                Text(text = if (cell.bandwidth > 0) "${cell.bandwidth.toInt()}" else "-", modifier = Modifier.weight(0.7f), color = Color.White)
                                 Text(
                                     text = cell.signalStrength.toString(),
                                     modifier = Modifier.weight(1f),
@@ -265,7 +265,7 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                     }
                 }
 
-                Text(text = "v1.0.2.1.bandwidth_alpha • VeteranOp Industries", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
+                Text(text = "1.0.0.4_Stable • VeteranOp Industries", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
             }
         }
     }
@@ -319,7 +319,7 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     Text("Carrier: ${currentCell.carrier}", color = Color.White)
                     Text("PCI: ${currentCell.pci}", color = Color.White)
                     Text("ARFCN: ${currentCell.arfcn}", color = Color.White)
-                    Text("Band: ${currentCell.band} (${currentCell.bandwidth}MHz)", color = Color.White)
+                    Text("Band: ${currentCell.band}${if (currentCell.bandwidth > 0) " (${currentCell.bandwidth.toInt()} MHz)" else ""}", color = Color.White)
                     Text("Type: ${currentCell.type}", color = Color.White)
                     Text("RSRP: ${currentCell.signalStrength}", color = Color.White)
                     Text("SINR: ${currentCell.signalQuality}", color = Color.White)
@@ -391,13 +391,13 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     Text("Other Actions:", color = Color.White)
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(onClick = { 
+                        Button(onClick = {
                             vm.updatePci(pci, currentCell.band, isIgnored = true)
-                            showDialog = false 
+                            showDialog = false
                         }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF600000))) { Text("Ignore") }
-                        
+
                         val isTargeted = state.discoveredPcis.find { it.pci == pci && it.band == currentCell.band }?.isTargeted == true
-                        Button(onClick = { 
+                        Button(onClick = {
                             vm.updatePci(pci, currentCell.band, isTargeted = !isTargeted)
                             showDialog = false
                         }, modifier = Modifier.weight(1f)) { Text(if (isTargeted) "Untarget" else "Target") }
@@ -643,7 +643,7 @@ fun PciCarrierListScreen(vm: CellFireViewModel, carrier: String) {
         containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { 
+                title = {
                     val cellColor = when (carrier.lowercase()) {
                         "t-mobile", "t-mobile (low-band)" -> Color(0xFFE20074)
                         "verizon", "verizon (b5)" -> Color(0xFFCC0000)

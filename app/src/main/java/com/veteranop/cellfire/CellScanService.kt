@@ -281,10 +281,11 @@ class CellScanService : LifecycleService() {
                     snr = 0
                 }
 
-                val bandwidth = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    identity.bandwidth / 1000.0
+                val bandwidth = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+                    identity.bandwidth != Int.MAX_VALUE && identity.bandwidth > 0) {
+                    identity.bandwidth / 1000.0  // API returns kHz, convert to MHz
                 } else {
-                    0.0
+                    lteBandToTypicalBandwidth(earfcnToLteBand(identity.earfcn))
                 }
 
                 LteCell(
@@ -341,7 +342,7 @@ class CellScanService : LifecycleService() {
                         pci = pci,
                         arfcn = identity.nrarfcn,
                         band = nrarfcnToNrBand(identity.nrarfcn),
-                        bandwidth = 0.0, 
+                        bandwidth = nrBandToTypicalBandwidth(nrarfcnToNrBand(identity.nrarfcn)),
                         signalStrength = rsrp,
                         signalQuality = snr,
                         rsrq = rsrq,
@@ -504,6 +505,51 @@ class CellScanService : LifecycleService() {
             in 370000..384000 -> "n2"
             in 173800..178000 -> "n5"
             else -> "n??"
+        }
+    }
+
+    /** Typical channel bandwidth per LTE band (MHz) — used when API doesn't report it */
+    private fun lteBandToTypicalBandwidth(band: String): Double {
+        return when (band) {
+            "B1"  -> 20.0
+            "B2"  -> 20.0
+            "B3"  -> 20.0
+            "B4"  -> 20.0
+            "B5"  -> 10.0
+            "B10" -> 20.0
+            "B12" -> 10.0
+            "B13" -> 10.0
+            "B14" -> 10.0
+            "B17" -> 10.0
+            "B20" -> 20.0
+            "B25" -> 20.0
+            "B26" -> 10.0
+            "B28" -> 20.0
+            "B30" -> 10.0
+            "B38" -> 20.0
+            "B40" -> 20.0
+            "B41" -> 20.0
+            "B65" -> 20.0
+            "B66" -> 20.0
+            "B71" -> 20.0
+            else  -> 0.0
+        }
+    }
+
+    /** Typical channel bandwidth per NR band (MHz) — used when API doesn't report it */
+    private fun nrBandToTypicalBandwidth(band: String): Double {
+        return when (band) {
+            "n2"   -> 20.0
+            "n5"   -> 10.0
+            "n25"  -> 20.0
+            "n41"  -> 100.0
+            "n66"  -> 20.0
+            "n71"  -> 20.0
+            "n77"  -> 100.0
+            "n78"  -> 100.0
+            "n260" -> 100.0
+            "n261" -> 100.0
+            else   -> 0.0
         }
     }
 }

@@ -15,8 +15,8 @@ android {
         applicationId = "com.veteranop.cellfire"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0-veteranop"
+        versionCode = 4
+        versionName = "1.0.0.4_Stable"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
