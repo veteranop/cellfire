@@ -27,6 +27,7 @@ sealed class Cell {
     abstract val pci: Int
     abstract val arfcn: Int
     abstract val band: String
+    abstract val bandwidth: Double
     abstract val signalStrength: Int
     abstract val signalQuality: Int
     abstract val rsrq: Int
@@ -43,6 +44,7 @@ data class LteCell(
     override val pci: Int,
     override val arfcn: Int,
     override val band: String,
+    override val bandwidth: Double,
     override val signalStrength: Int,
     override val signalQuality: Int,
     override val rsrq: Int,
@@ -60,6 +62,7 @@ data class NrCell(
     override val pci: Int,
     override val arfcn: Int,
     override val band: String,
+    override val bandwidth: Double,
     override val signalStrength: Int,
     override val signalQuality: Int,
     override val rsrq: Int,
@@ -77,6 +80,7 @@ data class WcdmaCell(
     override val pci: Int,
     override val arfcn: Int,
     override val band: String,
+    override val bandwidth: Double,
     override val signalStrength: Int,
     override val signalQuality: Int,
     override val rsrq: Int = 0,
@@ -94,6 +98,7 @@ data class GsmCell(
     override val pci: Int,
     override val arfcn: Int,
     override val band: String,
+    override val bandwidth: Double,
     override val signalStrength: Int,
     override val signalQuality: Int,
     override val rsrq: Int = 0,

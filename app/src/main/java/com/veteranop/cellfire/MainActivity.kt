@@ -124,7 +124,7 @@ fun StartScreen(navController: NavController, vm: CellFireViewModel) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Image(painter = painterResource(id = R.drawable.app_name), contentDescription = "app logo")
-            Text("v1.0.2.0.record_alpha", style = MaterialTheme.typography.bodyLarge, color = Color.White)
+            Text("v1.0.2.1.bandwidth_alpha", style = MaterialTheme.typography.bodyLarge, color = Color.White)
             Spacer(modifier = Modifier.height(32.dp))
             Button(onClick = { navController.navigate("scan") }, modifier = Modifier.fillMaxWidth()) { Text("Start Scan") }
             Spacer(modifier = Modifier.height(8.dp))
@@ -213,6 +213,7 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                     Text("CARRIER", Modifier.weight(1.6f), fontWeight = FontWeight.Bold, color = Color.LightGray)
                     Text("BAND", Modifier.weight(0.8f), fontWeight = FontWeight.Bold, color = Color.LightGray)
                     Text("PCI", Modifier.weight(0.8f), fontWeight = FontWeight.Bold, color = Color.LightGray)
+                    Text("BW", Modifier.weight(0.7f), fontWeight = FontWeight.Bold, color = Color.LightGray)
                     Text("RSRP", Modifier.weight(1f), fontWeight = FontWeight.Bold, color = Color.LightGray)
                     Text("SNR", Modifier.weight(1f), fontWeight = FontWeight.Bold, color = Color.LightGray)
                 }
@@ -252,6 +253,7 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                                 Text(text = cell.carrier.uppercase(), modifier = Modifier.weight(1.6f), fontWeight = if (cell.isRegistered) FontWeight.ExtraBold else FontWeight.Normal, color = Color.White)
                                 Text(text = cell.band, modifier = Modifier.weight(0.8f), color = Color.White)
                                 Text(text = cell.pci.toString(), modifier = Modifier.weight(0.8f), color = Color.White)
+                                Text(text = "${cell.bandwidth}MHz", modifier = Modifier.weight(0.7f), color = Color.White)
                                 Text(
                                     text = cell.signalStrength.toString(),
                                     modifier = Modifier.weight(1f),
@@ -263,7 +265,7 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                     }
                 }
 
-                Text(text = "v1.0.2.0.record_alpha • VeteranOp Industries", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
+                Text(text = "v1.0.2.1.bandwidth_alpha • VeteranOp Industries", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
             }
         }
     }
@@ -317,7 +319,7 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     Text("Carrier: ${currentCell.carrier}", color = Color.White)
                     Text("PCI: ${currentCell.pci}", color = Color.White)
                     Text("ARFCN: ${currentCell.arfcn}", color = Color.White)
-                    Text("Band: ${currentCell.band}", color = Color.White)
+                    Text("Band: ${currentCell.band} (${currentCell.bandwidth}MHz)", color = Color.White)
                     Text("Type: ${currentCell.type}", color = Color.White)
                     Text("RSRP: ${currentCell.signalStrength}", color = Color.White)
                     Text("SINR: ${currentCell.signalQuality}", color = Color.White)
