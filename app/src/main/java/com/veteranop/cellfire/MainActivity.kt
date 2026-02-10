@@ -772,7 +772,7 @@ fun AboutScreen() {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("CellFire", style = MaterialTheme.typography.headlineLarge, color = Color.White)
-        Text("v1.0.1.2.export_alpha", style = MaterialTheme.typography.bodyLarge, color = Color.White)
+        Text("v1.0.0.5_Stable", style = MaterialTheme.typography.bodyLarge, color = Color.White)
         Spacer(modifier = Modifier.height(16.dp))
         Text("Made by VeteranOp LLC", style = MaterialTheme.typography.bodyMedium, color = Color.White)
     }
