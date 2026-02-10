@@ -15,7 +15,13 @@ See every tower around you — T-Mobile, Verizon, AT&T, FirstNet, Dish — with 
 | Tactical battlefield UI              | Yes      | No         | No                | No          |
 | Free                                 |with ads  | Yes        | No                | No          |
 
-\* Requires paid version or data upload
+* Requires paid version or data upload
+<img width="1080" height="2424" alt="image" src="https://github.com/user-attachments/assets/676cda2f-fae3-4ddf-b1f4-e5939b30d4da" />
+<img width="1080" height="2424" alt="image" src="https://github.com/user-attachments/assets/5e52eb97-cd60-4228-9ce4-76664df3e263" />
+
+<img width="1080" height="2424" alt="image" src="https://github.com/user-attachments/assets/ec5a098c-b1a5-4a5c-923c-2c213dcccbda" />
+<img width="1080" height="2424" alt="image" src="https://github.com/user-attachments/assets/653a0480-71f4-4829-8d1c-4a67f3acf77b" />
+
 
 ## Why CellFire Exists
 
@@ -35,7 +41,7 @@ You own the spectrum. You see everything. Instantly.
 - **Real signal values** — RSRP, SNR/SINR, PCI
 - **LTE + 5G NR** — full support
 - **Tower map** — in development - Soon
-- **No internet required** — carrier from band + local lookup
+- **No internet required for carrier lookup** — carrier from band + local lookup
 - **Zero data collection** — nothing leaves your phone
 
 
