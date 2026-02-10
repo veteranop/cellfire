@@ -26,4 +26,7 @@ object DatabaseModule {
     fun provideDiscoveredPciDao(appDatabase: AppDatabase): DiscoveredPciDao {
         return appDatabase.discoveredPciDao()
     }
+
+    @Provides
+    fun provideDriveTestPointDao(appDatabase: AppDatabase): DriveTestPointDao = appDatabase.driveTestPointDao()
 }

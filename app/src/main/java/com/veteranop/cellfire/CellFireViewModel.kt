@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -21,7 +22,7 @@ import javax.inject.Inject
 @HiltViewModel
 class CellFireViewModel @Inject constructor(
     private val application: Application,
-    private val cellRepository: CellRepository
+    val cellRepository: CellRepository
 ) : ViewModel() {
 
     val uiState: StateFlow<CellFireUiState> = cellRepository.uiState
@@ -170,4 +171,12 @@ class CellFireViewModel @Inject constructor(
     fun clearPciHistory() {
         cellRepository.clearPciHistory()
     }
+
+    fun setDriveTestMode(enabled: Boolean) {
+        viewModelScope.launch {
+            cellRepository.setDriveTestMode(enabled)
+        }
+    }
+
+    fun isDriveTestMode(): Boolean = cellRepository.isDriveTestMode()
 }

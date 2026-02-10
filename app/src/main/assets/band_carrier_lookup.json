@@ -1,0 +1,64 @@
+{
+  "lte_band_to_carrier": {
+    "2": ["T-Mobile", "AT&T", "Verizon", "US Cellular"],
+    "4": ["T-Mobile", "AT&T", "Verizon", "US Cellular"],
+    "5": ["AT&T", "Verizon", "US Cellular"],
+    "12": ["AT&T", "T-Mobile", "US Cellular"],
+    "13": ["Verizon"],
+    "14": ["FirstNet"],
+    "25": ["T-Mobile"],
+    "26": ["T-Mobile"],
+    "41": ["T-Mobile"],
+    "46": ["AT&T", "Verizon", "T-Mobile"],
+    "48": ["Verizon", "AT&T", "T-Mobile"],
+    "66": ["AT&T", "T-Mobile", "Verizon"],
+    "71": ["T-Mobile", "Dish Wireless"]
+  },
+
+  "nr_band_to_carrier": {
+    "2": ["T-Mobile", "AT&T", "Verizon"],
+    "5": ["AT&T", "Verizon"],
+    "12": ["AT&T", "T-Mobile"],
+    "14": ["FirstNet"],
+    "25": ["T-Mobile"],
+    "41": ["T-Mobile"],
+    "66": ["AT&T", "T-Mobile", "Verizon"],
+    "71": ["T-Mobile", "Dish Wireless"],
+    "77": ["AT&T", "Verizon", "T-Mobile"],
+    "78": ["T-Mobile"],
+    "260": ["Verizon"],
+    "261": ["T-Mobile"]
+  },
+
+  "earfcn_ranges": {
+    "600-1199": {"band": 2, "name": "Band 2 (PCS 1900 MHz)"},
+    "1200-1949": {"band": 3, "name": "Band 3 (1800 MHz)"},
+    "1950-2399": {"band": 4, "name": "Band 4 (AWS)"},
+    "2400-2649": {"band": 5, "name": "Band 5 (850 MHz)"},
+    "5010-5179": {"band": 12, "name": "Band 12 (Lower 700 MHz)"},
+    "5180-5279": {"band": 13, "name": "Band 13 (Upper 700 MHz C)"},
+    "5280-5379": {"band": 14, "name": "Band 14 (Upper 700 MHz D)"},
+    "8040-8689": {"band": 25, "name": "Band 25 (PCS)"},
+    "8690-9039": {"band": 26, "name": "Band 26 (850 MHz)"},
+    "9210-9659": {"band": 41, "name": "Band 41 (2500 MHz TDD)"},
+    "9920-10359": {"band": 66, "name": "Band 66 (AWS Extended)"},
+    "68586-68935": {"band": 71, "name": "Band 71 (600 MHz)"},
+    "55240-56739": {"band": 48, "name": "Band 48 (CBRS 3.5 GHz)"}
+  },
+
+  "carrier_exclusive_bands": {
+    "13": "Verizon",
+    "14": "FirstNet",
+    "260": "Verizon",
+    "261": "T-Mobile"
+  },
+
+  "carrier_priority_bands": {
+    "T-Mobile": [71, 41, 25, 26, 66, 2, 4],
+    "Verizon": [13, 5, 2, 4, 66, 48],
+    "AT&T": [14, 12, 5, 2, 4, 66],
+    "FirstNet": [14],
+    "Dish Wireless": [71, 70, 29],
+    "US Cellular": [12, 5, 4, 2]
+  }
+}

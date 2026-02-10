@@ -38,12 +38,16 @@ sealed class Cell {
     abstract val lastSeen: Long
     abstract val latitude: Double
     abstract val longitude: Double
+    abstract val rsrp: Int
+    abstract val snr: Int
 }
 
 data class LteCell(
     override val pci: Int,
     override val arfcn: Int,
     override val band: String,
+    override val rsrp: Int = Int.MIN_VALUE,
+    override val snr: Int = 0,
     override val bandwidth: Double,
     override val signalStrength: Int,
     override val signalQuality: Int,
@@ -62,6 +66,8 @@ data class NrCell(
     override val pci: Int,
     override val arfcn: Int,
     override val band: String,
+    override val rsrp: Int = Int.MIN_VALUE,
+    override val snr: Int = 0,
     override val bandwidth: Double,
     override val signalStrength: Int,
     override val signalQuality: Int,
@@ -80,6 +86,8 @@ data class WcdmaCell(
     override val pci: Int,
     override val arfcn: Int,
     override val band: String,
+    override val rsrp: Int = Int.MIN_VALUE,
+    override val snr: Int = 0,
     override val bandwidth: Double,
     override val signalStrength: Int,
     override val signalQuality: Int,
@@ -98,6 +106,8 @@ data class GsmCell(
     override val pci: Int,
     override val arfcn: Int,
     override val band: String,
+    override val rsrp: Int = Int.MIN_VALUE,
+    override val snr: Int = 0,
     override val bandwidth: Double,
     override val signalStrength: Int,
     override val signalQuality: Int,
@@ -124,6 +134,19 @@ data class DiscoveredPci(
     var isTargeted: Boolean = false
 )
 
+@Entity(tableName = "drive_test_points")
+data class DriveTestPoint(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val timestamp: Long,
+    val latitude: Double,
+    val longitude: Double,
+    val pci: Int,
+    val rsrp: Int,  // For coloring (dBm)
+    val snr: Int,
+    val band: String,
+    val carrier: String
+)
+
 data class SignalHistoryPoint(val timestamp: Long, val rsrp: Int, val sinr: Int, val rsrq: Int)
 
 data class LogEntry(val timestamp: Long, val message: String)
@@ -138,5 +161,6 @@ data class CellFireUiState(
     val registeredCarrierName: String = "Unknown",
     val discoveredPcis: List<DiscoveredPci> = emptyList(),
     val signalHistory: Map<Pair<Int, Int>, List<SignalHistoryPoint>> = emptyMap(),
-    val isRefreshing: Boolean = false
+    val isRefreshing: Boolean = false,
+    val isDriveTestMode: Boolean = false
 )

@@ -1,22 +1,37 @@
 package com.veteranop.cellfire
 
+import android.content.Context
+import android.util.Log
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationServices
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import org.osmdroid.config.Configuration
+import java.io.File
+import java.io.FileWriter
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class CellRepository @Inject constructor(
-    private val discoveredPciDao: DiscoveredPciDao
+    private val discoveredPciDao: DiscoveredPciDao,
+    private val driveTestPointDao: DriveTestPointDao,
+    @ApplicationContext private val context: Context
 ) {
     private val _uiState = MutableStateFlow(CellFireUiState())
     val uiState = _uiState.asStateFlow()
 
     private val repositoryScope = CoroutineScope(Dispatchers.IO)
+    private val fusedLocationClient: FusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(context)
+    private var isDriveTestMode = false
 
     init {
         repositoryScope.launch {
@@ -55,6 +70,40 @@ class CellRepository @Inject constructor(
 
     fun setRecording(isRecording: Boolean) {
         _uiState.update { it.copy(isRecording = isRecording) }
+    }
+
+    fun setDriveTestMode(enabled: Boolean) {
+        isDriveTestMode = enabled
+        _uiState.update { it.copy(isDriveTestMode = enabled) }
+        Log.d("CellFire", "Drive test mode set to $enabled")
+    }
+
+    fun isDriveTestMode() = isDriveTestMode
+
+    fun getAllPointsFlow(): Flow<List<DriveTestPoint>> = driveTestPointDao.getAllPoints()
+
+    suspend fun getAllPointsSync(): List<DriveTestPoint> {
+        return driveTestPointDao.getAllPoints().first()
+    }
+
+    fun getPointsForPci(pci: Int): Flow<List<DriveTestPoint>> = driveTestPointDao.getPointsForPci(pci)
+
+    suspend fun getPointsForPciSync(pci: Int): List<DriveTestPoint> {
+        return driveTestPointDao.getPointsForPci(pci).first()
+    }
+
+    suspend fun exportPciCsv(pci: Int): File {
+        val points = getPointsForPciSync(pci)
+        val csv = buildString {
+            appendLine("Timestamp,Latitude,Longitude,Carrier,Band,PCI,RSRP_dBm,SNR_dB")
+            points.forEach { point ->
+                appendLine("${point.timestamp},${point.latitude},${point.longitude},${point.carrier},${point.band},${point.pci},${point.rsrp},${point.snr}")
+            }
+        }
+        val file = File(context.cacheDir, "pci_${pci}_drive.csv")
+        FileWriter(file).use { it.write(csv) }
+        Log.d("CellFire", "Exported ${points.size} points for PCI $pci to ${file.absolutePath}")
+        return file
     }
 
     fun addLogLine(logLine: String) {
@@ -126,6 +175,39 @@ class CellRepository @Inject constructor(
                         lastSeen = now
                     )
                 )
+            }
+        }
+
+        if (isDriveTestMode) {
+            Log.d("CellFire", "Drive test active, fetching location for ${cells.size} cells")
+            val location = try {
+                fusedLocationClient.lastLocation.await()
+            } catch (e: Exception) {
+                null
+            }
+
+            if (location != null) {
+                val points = cells.mapNotNull { cell ->
+                    // Use signalStrength and signalQuality instead of empty rsrp/snr fields
+                    if (cell.signalStrength != Int.MIN_VALUE && cell.signalStrength != 0) {
+                        DriveTestPoint(
+                            timestamp = now,
+                            latitude = location.latitude,
+                            longitude = location.longitude,
+                            pci = cell.pci,
+                            rsrp = cell.signalStrength,
+                            snr = cell.signalQuality,
+                            band = cell.band,
+                            carrier = cell.carrier
+                        )
+                    } else null
+                }
+                if (points.isNotEmpty()) {
+                    driveTestPointDao.insertAll(points)
+                    Log.d("CellFire", "Inserted ${points.size} points to DB")
+                }
+            } else {
+                Log.w("CellFire", "No location available for drive test logging")
             }
         }
     }

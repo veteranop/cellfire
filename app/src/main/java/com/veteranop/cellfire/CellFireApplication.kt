@@ -7,5 +7,6 @@ import dagger.hilt.android.HiltAndroidApp
 class CellFireApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        CarrierResolver.initialize(this)
     }
 }

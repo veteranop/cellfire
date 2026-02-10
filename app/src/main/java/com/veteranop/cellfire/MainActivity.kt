@@ -6,12 +6,15 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color as AndroidColor
 import android.os.Bundle
+import android.os.Environment
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -54,9 +57,11 @@ import com.veteranop.cellfire.ui.theme.CellFireTheme
 import dagger.hilt.android.AndroidEntryPoint
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -69,7 +74,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        Configuration.getInstance().load(applicationContext, getSharedPreferences("osmdroid", MODE_PRIVATE))
+        // OSMDroid setup for caching
+        val osmConfig = Configuration.getInstance()
+        osmConfig.osmdroidBasePath = File(cacheDir, "osmdroid")
+        osmConfig.osmdroidTileCache = File(osmConfig.osmdroidBasePath, "tiles")
+        osmConfig.load(this, getSharedPreferences("osmdroid", MODE_PRIVATE))
+        Log.d("CellFire", "OSMDroid cache set up at ${osmConfig.osmdroidBasePath}")
+
         Configuration.getInstance().userAgentValue = "CellFire-VeteranOp/1.0"
 
         setContent {
@@ -80,6 +91,7 @@ class MainActivity : ComponentActivity() {
                     NavHost(navController = navController, startDestination = "start") {
                         composable("start") { StartScreen(navController, vm) }
                         composable("scan") { ScanScreen(navController, vm) }
+                        composable("pci_discovery") { PciDiscoveryScreen(navController, viewModel = vm) }
                         composable(
                             "detail/{pci}/{arfcn}",
                             arguments = listOf(
@@ -91,14 +103,20 @@ class MainActivity : ComponentActivity() {
                             val arfcn = backStackEntry.arguments?.getInt("arfcn") ?: 0
                             CellDetailScreen(vm, pci, arfcn, navController)
                         }
-                        composable("map") { MapScreen(vm) }
                         composable("raw") { RawLogScreen(vm) }
                         composable("about") { AboutScreen() }
                         composable("settings") { SettingsScreen() }
                         composable("pci_table") { PciTableScreen(navController, vm) }
                         composable("pci_carrier_list/{carrier}") { backStackEntry ->
                             val carrier = backStackEntry.arguments?.getString("carrier") ?: ""
-                            PciCarrierListScreen(vm, carrier)
+                            PciCarrierListScreen(navController, vm, carrier)
+                        }
+                        composable(
+                            route = "pci_map/{pci}",
+                            arguments = listOf(navArgument("pci") { type = NavType.IntType })
+                        ) { backStackEntry ->
+                            val pci = backStackEntry.arguments?.getInt("pci") ?: 0
+                            PciMapScreen(navController, pci, vm)
                         }
                     }
                 }
@@ -182,8 +200,11 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                 Image(painter = painterResource(id = R.drawable.app_name), contentDescription = "app logo", modifier = Modifier.padding(bottom = 16.dp))
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ElevatedButton(onClick = { vm.toggleMonitoring() }) {
-                        Text(if (state.isMonitoring) "CEASE FIRE" else "ENGAGE TARGETS", color = Color.White)
+                    ElevatedButton(
+                        onClick = { vm.toggleMonitoring() },
+                        colors = if (state.isMonitoring) ButtonDefaults.elevatedButtonColors(containerColor = Color.Black, contentColor = Color.Red) else ButtonDefaults.elevatedButtonColors()
+                    ) {
+                        Text(if (state.isMonitoring) "CEASE FIRE" else "ENGAGE TARGETS")
                     }
                     ElevatedButton(
                         onClick = { vm.toggleDeepScan(!deepScanActive) },
@@ -207,6 +228,19 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                     }
                 }
 
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                    Text("Drive Test Mode:", color = Color.White)
+                    Switch(
+                        checked = state.isDriveTestMode,
+                        onCheckedChange = { vm.setDriveTestMode(it) }
+        )
+                }
+
                 Spacer(Modifier.height(16.dp))
 
                 Row(modifier = Modifier.fillMaxWidth()) {
@@ -224,7 +258,7 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                     val discoveredPci = state.discoveredPcis.find { pci -> pci.pci == it.pci && pci.band == it.band }
                     val isIgnored = discoveredPci?.isIgnored ?: false
                     !isIgnored
-                }
+                }.sortedByDescending { it.isRegistered }
 
                 SwipeRefresh(
                     state = rememberSwipeRefreshState(state.isRefreshing),
@@ -240,16 +274,20 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                                 "firstnet" -> Color.Black
                                 "dish wireless" -> Color(0xFFFF6200)
                                 else -> Color.DarkGray
-                            }
+                }
                             val finalColor = if (discoveredPci?.isTargeted == true) Color.Cyan else cellColor
 
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .background(finalColor.copy(alpha = 0.4f))
+                                    .then(
+                                        if (cell.isRegistered) Modifier.border(1.dp, Color(0xFFFFD700))
+                                        else Modifier
+                                    )
                                     .clickable { navController.navigate("detail/${cell.pci}/${cell.arfcn}") }
                                     .padding(12.dp)
-                            ) {
+        ) {
                                 Text(text = cell.carrier.uppercase(), modifier = Modifier.weight(1.6f), fontWeight = if (cell.isRegistered) FontWeight.ExtraBold else FontWeight.Normal, color = Color.White)
                                 Text(text = cell.band, modifier = Modifier.weight(0.8f), color = Color.White)
                                 Text(text = cell.pci.toString(), modifier = Modifier.weight(0.8f), color = Color.White)
@@ -260,9 +298,9 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                                     color = if (cell.signalStrength > -85) Color.Green else if (cell.signalStrength > -100) Color.Yellow else Color.Red
                                 )
                                 Text(text = cell.signalQuality.toString(), modifier = Modifier.weight(1f), color = Color.White)
-                            }
-                        }
-                    }
+        }
+    }
+}
                 }
 
                 Text(text = "1.0.0.4_Stable • VeteranOp Industries", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
@@ -282,40 +320,43 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
     val currentCell = cell
     if (currentCell == null) {
         Box(
-            modifier = Modifier
+                        modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black)
                 .padding(16.dp),
             contentAlignment = Alignment.Center
-        ) {
+                    ) {
             Text("Cell not found. Waiting for data...", color = Color.White, style = MaterialTheme.typography.bodyLarge)
-        }
+                        }
         return
-    }
+                    }
 
     var selectedCarrier by remember(currentCell) { mutableStateOf(currentCell.carrier) }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        Image(
-            painter = painterResource(id = R.drawable.cfbackground),
-            contentDescription = "background",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize().alpha(0.4f)
-        )
+        Box(modifier = Modifier.fillMaxSize()) {
+            Image(
+                painter = painterResource(id = R.drawable.cfbackground),
+                contentDescription = "background",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().alpha(0.4f)
+            )
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(16.dp)
-        ) {
+            ) {
             Card(colors = CardDefaults.cardColors(containerColor = Color.DarkGray.copy(alpha=0.6f))) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Cell Details", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f), color = Color.White)
+                        Button(onClick = { navController.navigate("pci_map/${currentCell.pci}") }) {
+                            Text("Map")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Button(onClick = { showDialog = true }) {
                             Text("Edit")
                         }
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(16.dp))
                     Text("Carrier: ${currentCell.carrier}", color = Color.White)
                     Text("PCI: ${currentCell.pci}", color = Color.White)
                     Text("ARFCN: ${currentCell.arfcn}", color = Color.White)
@@ -331,13 +372,13 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     val freq = when (currentCell) {
                         is LteCell -> FrequencyCalculator.earfcnToFrequency(currentCell.arfcn)
                         else -> null
-                    }
+    }
                     if (freq != null) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text("DL Freq: ${String.format("%.1f", freq.first)} MHz", color = Color.White)
                         if (freq.second > 0) {
                             Text("UL Freq: ${String.format("%.1f", freq.second)} MHz", color = Color.White)
-                        }
+}
                     }
                 }
             }
@@ -489,27 +530,6 @@ fun SignalChart(history: List<SignalHistoryPoint>) {
     }
 }
 
-@Composable
-fun MapScreen(vm: CellFireViewModel) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        AndroidView(
-            factory = { ctx ->
-                MapView(ctx).apply {
-                    setTileSource(TileSourceFactory.MAPNIK)
-                    setMultiTouchControls(true)
-                    setBuiltInZoomControls(true)
-                    controller.setZoom(16.0)
-                    val provider = GpsMyLocationProvider(ctx)
-                    val myLocationOverlay = MyLocationNewOverlay(provider, this)
-                    myLocationOverlay.enableMyLocation()
-                    myLocationOverlay.enableFollowLocation()
-                    overlays.add(myLocationOverlay)
-                }
-            }
-        )
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RawLogScreen(vm: CellFireViewModel) {
@@ -622,7 +642,7 @@ fun PciTableScreen(navController: NavController, vm: CellFireViewModel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PciCarrierListScreen(vm: CellFireViewModel, carrier: String) {
+fun PciCarrierListScreen(navController: NavController, vm: CellFireViewModel, carrier: String) {
     val context = LocalContext.current
     val state by vm.uiState.collectAsState()
     val pcis = state.discoveredPcis.filter { it.carrier == carrier }
@@ -687,7 +707,10 @@ fun PciCarrierListScreen(vm: CellFireViewModel, carrier: String) {
                 items(pcis.sortedByDescending { it.lastSeen }) { pci ->
                     Card(
                         colors = CardDefaults.cardColors(containerColor = Color.DarkGray.copy(alpha = 0.6f)),
-                        modifier = Modifier.fillMaxWidth().height(60.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(60.dp)
+                            .clickable { navController.navigate("pci_map/${pci.pci}") }
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(12.dp),
