@@ -1,6 +1,7 @@
 package com.veteranop.cellfire
 
 import android.content.Context
+import android.util.Log
 import android.util.LruCache
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.Serializable
@@ -115,7 +116,24 @@ object CarrierResolver {
             lookup.lte_band_to_carrier[band.toString()]
         }
         
-        return carriers
+        return carriers?.let { list ->
+            if (list.size > 1) {
+                // Prioritize: e.g., n71 is usually T-Mobile
+                when (band) {
+                    71 -> listOf("T-Mobile") + list.filter { it != "T-Mobile" }
+                    2, 4, 13 -> listOf("Verizon") + list.filter { it != "Verizon" }
+                    // Add more heuristics as needed
+                    else -> list
+                }
+            } else list
+        }
+    }
+
+    // Helper for consistent PCI naming (e.g., for UI/logs)
+    fun formatPciName(cell: Cell): String {
+        val carrier = cell.carrier.takeIf { it != "Unknown" } ?: "?"
+        val bandPrefix = if (cell.band.isNotEmpty()) "${cell.band} " else ""
+        return "$carrier $bandPrefix PCI ${cell.pci}"
     }
 
     suspend fun resolveFromOpenCellId(
@@ -182,6 +200,7 @@ object CarrierResolver {
                 fallbackName(mcc, mnc) to null
             }
         } catch (e: Exception) {
+            Log.e("CarrierResolver", "UnwiredLabs failed: ${e.message}")
             fallbackName(mcc, mnc) to null
         }
     }
@@ -190,39 +209,36 @@ object CarrierResolver {
         val plmn = String.format("%03d%02d", mcc, mnc)
         
         return when (plmn) {
-            // T-Mobile (including Sprint legacy)
-            "310160", "310200", "310210", "310220", "310230", "310240", 
+            // T-Mobile (including MVNOs and legacy Sprint)
+            "310160", "310200", "310210", "310220", "310230", "310240",
             "310250", "310260", "310270", "310310", "310490", "310660",
-            "310800", "311882", "312250", "316010" -> "T-Mobile"
-            
-            // Verizon
+            "310800", "311882", "312250", "316010", "310120" /* Mint Mobile */, "310026" /* Boost on T-Mobile */ -> "T-Mobile"
+
+            // Verizon (including MVNOs like Visible)
             "310004", "310010", "310012", "310013", "310590", "310890",
             "310910", "311012", "311110", "311270", "311271", "311272",
             "311273", "311274", "311275", "311276", "311277", "311278",
             "311279", "311280", "311281", "311282", "311283", "311284",
             "311285", "311286", "311287", "311288", "311289", "311390",
             "311480", "311481", "311482", "311483", "311484", "311485",
-            "311486", "311487", "311488", "311489" -> "Verizon"
-            
-            // AT&T
+            "311486", "311487", "311488", "311489", "310005" /* Visible */ -> "Verizon"
+
+            // AT&T (including Cricket, FirstNet expansions)
             "310070", "310150", "310170", "310280", "310380", "310410",
             "310560", "310670", "310680", "310950", "311070", "311180",
-            "311870", "312670" -> "AT&T"
-            
+            "311870", "312670", "310030" /* Cricket */ -> "AT&T"
             // Dish Wireless
             "312670", "313340" -> "Dish Wireless"
             
-            // FirstNet
-            "313100" -> "FirstNet"
-            
+            // FirstNet (expanded)
+            "313100", "310410" /* Some overlaps */ -> "FirstNet"
+
             // US Cellular
             "310066", "311220", "311580", "311581", "311582", "311583",
             "311584", "311585", "311586", "311587", "311588", "311589" -> "US Cellular"
             
-            // C Spire
+            // More Regionals/MVNOs
             "311230" -> "C Spire"
-            
-            // Regional carriers
             "311800" -> "Bluegrass Cellular"
             "310000" -> "Cellcom"
             "311120" -> "Chat Mobility"
@@ -233,7 +249,10 @@ object CarrierResolver {
             "311860" -> "Union Wireless"
             "310890" -> "Rural Cellular"
             "312270" -> "Viaero"
-            
+            "310830" -> "Thumb Cellular"  // Additional regional
+            "311490" -> "Cellular One"    // Northeast
+            "310910" -> "Panhandle"       // Texas regional
+
             else -> "Unknown ($plmn)"
         }
     }

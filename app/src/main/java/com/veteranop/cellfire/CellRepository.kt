@@ -93,7 +93,7 @@ class CellRepository @Inject constructor(
     }
 
     suspend fun exportPciCsv(pci: Int): File {
-        val points = getPointsForPciSync(pci)
+        val points = getPointsForPci(pci).first()
         val csv = buildString {
             appendLine("Timestamp,Latitude,Longitude,Carrier,Band,PCI,RSRP_dBm,SNR_dB")
             points.forEach { point ->
@@ -103,6 +103,20 @@ class CellRepository @Inject constructor(
         val file = File(context.cacheDir, "pci_${pci}_drive.csv")
         FileWriter(file).use { it.write(csv) }
         Log.d("CellFire", "Exported ${points.size} points for PCI $pci to ${file.absolutePath}")
+        return file
+    }
+
+    suspend fun exportAllCsv(): File {
+        val points = getAllPointsFlow().first()
+        val csv = buildString {
+            appendLine("Timestamp,Latitude,Longitude,Carrier,Band,PCI,RSRP_dBm,SNR_dB")
+            points.forEach { point ->
+                appendLine("${point.timestamp},${point.latitude},${point.longitude},${point.carrier},${point.band},${point.pci},${point.rsrp},${point.snr}")
+            }
+        }
+        val file = File(context.cacheDir, "all_drive_points.csv")
+        FileWriter(file).use { it.write(csv) }
+        Log.d("CellFire", "Exported ${points.size} points for ALL PCIs to ${file.absolutePath}")
         return file
     }
 

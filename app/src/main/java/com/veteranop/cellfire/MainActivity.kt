@@ -1,6 +1,7 @@
 package com.veteranop.cellfire
 
 import android.Manifest
+import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
