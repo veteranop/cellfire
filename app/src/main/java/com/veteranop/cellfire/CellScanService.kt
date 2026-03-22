@@ -354,8 +354,10 @@ class CellScanService : LifecycleService() {
                     val bandLabel = earfcnToLteBand(identity.earfcn)
                     val fccCarrier = BandLicenseMap.resolveCarrier(currentState, bandLabel, identity.earfcn)
                     val rawCarrier = dbResult?.carrier ?: fccCarrier ?: pciToCarrier(pci)
-                    // Reject carrier if incompatible with this band (e.g. Verizon on B12)
-                    carrier = if (CarrierResolver.isCarrierValidForBand(rawCarrier, identity.earfcn)) rawCarrier else "Unknown"
+                    // Reject carrier if incompatible with this band (e.g. Verizon on B12).
+                    // Pass bandLabel so we use the full lte_band_to_carrier table, not just
+                    // the incomplete earfcn_ranges subset in the JSON.
+                    carrier = if (CarrierResolver.isCarrierValidForBand(rawCarrier, identity.earfcn, bandLabel)) rawCarrier else "Unknown"
                     crowdsourceSource = when {
                         fccCarrier != null -> "fcc_band"
                         dbResult != null   -> "db"
@@ -437,7 +439,7 @@ class CellScanService : LifecycleService() {
                         val fccCarrier = BandLicenseMap.resolveCarrier(currentState, nrBand, identity.nrarfcn)
                         val rawCarrier = dbResult?.carrier ?: fccCarrier ?: pciToCarrier(pci)
                         // Reject carrier if incompatible with this NR band
-                        carrier = if (CarrierResolver.isCarrierValidForBand(rawCarrier, identity.nrarfcn, isNr = true)) rawCarrier else "Unknown"
+                        carrier = if (CarrierResolver.isCarrierValidForBand(rawCarrier, identity.nrarfcn, nrBand, isNr = true)) rawCarrier else "Unknown"
                         crowdsourceSource = when {
                             fccCarrier != null -> "fcc_band"
                             dbResult != null   -> "db"

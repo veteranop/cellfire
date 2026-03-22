@@ -130,11 +130,38 @@ object CarrierResolver {
     }
 
     /**
-     * Returns true if [carrier] is known to operate on the band associated with [earfcn].
-     * Returns true (permissive) if band data is unavailable so we don't over-filter.
+     * Returns true if [carrier] is known to operate on the given band.
+     *
+     * [bandLabel] is the already-resolved band string (e.g. "B12", "n71") from
+     * earfcnToLteBand() / nrarfcnToNrBand(). When provided it is used directly
+     * against lte_band_to_carrier / carrier_exclusive_bands, bypassing the
+     * incomplete earfcn_ranges table in the JSON which only covers B17 and B41.
+     *
+     * Falls back to resolveFromBand(earfcn) if bandLabel is absent or unrecognised.
+     * Returns true (permissive) only if no band data exists at all.
      */
-    fun isCarrierValidForBand(carrier: String, earfcn: Int, isNr: Boolean = false): Boolean {
-        val validCarriers = resolveFromBand(earfcn, isNr) ?: return true  // no data → allow
+    fun isCarrierValidForBand(
+        carrier: String,
+        earfcn: Int,
+        bandLabel: String = "",
+        isNr: Boolean = false
+    ): Boolean {
+        if (bandLabel.isNotEmpty()) {
+            val bandNum = bandLabel.removePrefix("B").removePrefix("n").toIntOrNull()
+            if (bandNum != null) {
+                val lookup = bandLookup
+                // Exclusive band → only one carrier allowed
+                lookup?.carrier_exclusive_bands?.get(bandNum.toString())?.let { exclusive ->
+                    return carrier == exclusive
+                }
+                // Shared band → check allowed list
+                val valid = if (isNr) lookup?.nr_band_to_carrier?.get(bandNum.toString())
+                            else      lookup?.lte_band_to_carrier?.get(bandNum.toString())
+                if (valid != null) return carrier in valid
+            }
+        }
+        // Fallback: resolve band from EARFCN (works for B17/B41 only via earfcn_ranges)
+        val validCarriers = resolveFromBand(earfcn, isNr) ?: return true
         return carrier in validCarriers
     }
 
