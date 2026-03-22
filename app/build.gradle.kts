@@ -97,6 +97,7 @@ dependencies {
     // Firebase
     implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
     implementation("com.google.firebase:firebase-analytics-ktx")
+    implementation("com.google.firebase:firebase-database-ktx")
 
     // Accompanist
     implementation("com.google.accompanist:accompanist-swiperefresh:0.24.13-rc")

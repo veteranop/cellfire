@@ -52,6 +52,10 @@ import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.Entry
 import com.github.mikephil.charting.data.LineData
 import com.github.mikephil.charting.data.LineDataSet
+import com.google.android.gms.location.LocationServices
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import com.google.accompanist.swiperefresh.SwipeRefresh
 import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
 import com.veteranop.cellfire.ui.theme.CellFireTheme
@@ -68,7 +72,8 @@ import java.util.Date
 import java.util.Locale
 
 const val PREFS_NAME = "CellFirePrefs"
-const val API_KEY_NAME = "opencellid_api_key"
+const val CROWDSOURCE_ENABLED_KEY = "crowdsource_enabled"
+const val LAST_SYNC_KEY = "last_db_sync"
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -106,7 +111,7 @@ class MainActivity : ComponentActivity() {
                         }
                         composable("raw") { RawLogScreen(vm) }
                         composable("about") { AboutScreen() }
-                        composable("settings") { SettingsScreen() }
+                        composable("settings") { SettingsScreen(vm) }
                         composable("pci_table") { PciTableScreen(navController, vm) }
                         composable("pci_carrier_list/{carrier}") { backStackEntry ->
                             val carrier = backStackEntry.arguments?.getString("carrier") ?: ""
@@ -358,7 +363,18 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                         }
                     }
         Spacer(modifier = Modifier.height(16.dp))
-                    Text("Carrier: ${currentCell.carrier}", color = Color.White)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Carrier: ${currentCell.carrier}", color = Color.White)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        val isInDb = remember(currentCell.pci, currentCell.tac) {
+                            CellfireDbManager.lookupByPciTac(currentCell.pci, currentCell.tac) != null
+                        }
+                        Text(
+                            "●",
+                            color = if (isInDb) Color(0xFF4CAF50) else Color(0xFFF44336),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
                     Text("PCI: ${currentCell.pci}", color = Color.White)
                     Text("ARFCN: ${currentCell.arfcn}", color = Color.White)
                     Text("Band: ${currentCell.band}${if (currentCell.bandwidth > 0) " (${currentCell.bandwidth.toInt()} MHz)" else ""}", color = Color.White)
@@ -372,14 +388,15 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     Text("Longitude: ${currentCell.longitude}", color = Color.White)
                     val freq = when (currentCell) {
                         is LteCell -> FrequencyCalculator.earfcnToFrequency(currentCell.arfcn)
+                        is NrCell  -> FrequencyCalculator.nrarfcnToFrequency(currentCell.arfcn)
                         else -> null
-    }
+                    }
                     if (freq != null) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text("DL Freq: ${String.format("%.1f", freq.first)} MHz", color = Color.White)
-                        if (freq.second > 0) {
+                        if (freq.second > 0 && freq.second != freq.first) {
                             Text("UL Freq: ${String.format("%.1f", freq.second)} MHz", color = Color.White)
-}
+                        }
                     }
                 }
             }
@@ -735,32 +752,165 @@ fun PciCarrierListScreen(navController: NavController, vm: CellFireViewModel, ca
 
 
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(vm: CellFireViewModel) {
     val context = LocalContext.current
     val sharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    var apiKey by remember { mutableStateOf(sharedPreferences.getString(API_KEY_NAME, "") ?: "") }
+    var crowdsourceEnabled by remember {
+        mutableStateOf(sharedPreferences.getBoolean(CROWDSOURCE_ENABLED_KEY, true))
+    }
+    var lastSynced by remember { mutableStateOf(sharedPreferences.getLong(LAST_SYNC_KEY, 0L)) }
+    var isSyncing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val fusedLocation = remember { LocationServices.getFusedLocationProviderClient(context) }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.Top
     ) {
-        Text("Settings", style=MaterialTheme.typography.headlineLarge, color = Color.White)
-        OutlinedTextField(
-            value = apiKey,
-            onValueChange = { apiKey = it },
-            label = { Text("OpenCellID API Key") },
-            modifier = Modifier.fillMaxWidth()
-        )
-        Button(
-            onClick = {
-                with(sharedPreferences.edit()) {
-                    putString(API_KEY_NAME, apiKey)
-                    apply()
-                }
-            },
-            modifier = Modifier.align(Alignment.End)
+        Text("Settings", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Spacer(modifier = Modifier.height(24.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("Save")
+            Text("Upload cell data", color = Color.White)
+            Switch(
+                checked = crowdsourceEnabled,
+                onCheckedChange = { enabled ->
+                    crowdsourceEnabled = enabled
+                    sharedPreferences.edit().putBoolean(CROWDSOURCE_ENABLED_KEY, enabled).apply()
+                }
+            )
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text("Cell database", color = Color.White)
+                Text(
+                    if (lastSynced > 0L)
+                        "Last synced: ${SimpleDateFormat("MMM d, h:mm a", Locale.US).format(Date(lastSynced))}"
+                    else
+                        "Never synced",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Button(
+                onClick = {
+                    scope.launch {
+                        isSyncing = true
+                        CellfireDbManager.clearCache()
+                        try {
+                            val loc = suspendCancellableCoroutine { cont ->
+                                fusedLocation.lastLocation
+                                    .addOnSuccessListener { cont.resume(it) }
+                                    .addOnFailureListener { cont.resume(null) }
+                            }
+                            if (loc != null) {
+                                CellfireDbManager.refreshTiles(loc.latitude, loc.longitude)
+                                val now = System.currentTimeMillis()
+                                sharedPreferences.edit().putLong(LAST_SYNC_KEY, now).apply()
+                                lastSynced = now
+                            }
+                        } finally {
+                            isSyncing = false
+                        }
+                    }
+                },
+                enabled = !isSyncing
+            ) {
+                Text(if (isSyncing) "Syncing..." else "Sync DB")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Upload Discovered PCIs
+        var isUploading by remember { mutableStateOf(false) }
+        var uploadResult by remember { mutableStateOf("") }
+        val discoveredPcis = vm.uiState.collectAsState().value.discoveredPcis
+        val validCount = discoveredPcis.count { it.tac > 0 }
+
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Upload discovered PCIs", color = Color.White)
+                Text(
+                    "$validCount with valid TAC ready to upload" +
+                        if (uploadResult.isNotEmpty()) "\n$uploadResult" else "",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Button(
+                onClick = {
+                    isUploading = true
+                    uploadResult = ""
+                    vm.uploadDiscovered { uploaded, skipped ->
+                        isUploading = false
+                        uploadResult = "Sent $uploaded" + if (skipped > 0) ", $skipped skipped (no GPS)" else ""
+                    }
+                },
+                enabled = !isUploading && validCount > 0
+            ) {
+                Text(if (isUploading) "Uploading..." else "Upload")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        // Clear All Data
+        var showClearConfirm by remember { mutableStateOf(false) }
+        var isClearing by remember { mutableStateOf(false) }
+
+        if (showClearConfirm) {
+            AlertDialog(
+                onDismissRequest = { showClearConfirm = false },
+                title = { Text("Clear All Data?") },
+                text = { Text("This will wipe all discovered PCIs, drive test points, tile cache, and settings. This cannot be undone.") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showClearConfirm = false
+                            isClearing = true
+                            sharedPreferences.edit().clear().apply()
+                            crowdsourceEnabled = true
+                            lastSynced = 0L
+                            vm.clearAllData { isClearing = false }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                    ) {
+                        Text("Clear Everything")
+                    }
+                },
+                dismissButton = {
+                    Button(onClick = { showClearConfirm = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Clear All Data", color = Color.Red)
+                Text(
+                    "Wipes tile cache, discovered PCIs, drive test points, and settings",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Button(
+                onClick = { showClearConfirm = true },
+                enabled = !isClearing,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+            ) {
+                Text(if (isClearing) "Clearing..." else "Clear")
+            }
         }
     }
 }

@@ -40,6 +40,9 @@ sealed class Cell {
     abstract val longitude: Double
     abstract val rsrp: Int
     abstract val snr: Int
+    abstract val fromDb: Boolean
+    abstract val mnc: String       // MNC string as reported by TM (empty if unknown)
+    abstract val source: String    // "alpha", "plmn", "fcc_band", "db", "pci_range", ""
 }
 
 data class LteCell(
@@ -57,7 +60,10 @@ data class LteCell(
     override val tac: Int,
     override val lastSeen: Long = System.currentTimeMillis(),
     override val latitude: Double,
-    override val longitude: Double
+    override val longitude: Double,
+    override val fromDb: Boolean = false,
+    override val mnc: String = "",
+    override val source: String = ""
 ) : Cell() {
     override val type: String = "LTE"
 }
@@ -77,7 +83,10 @@ data class NrCell(
     override val tac: Int,
     override val lastSeen: Long = System.currentTimeMillis(),
     override val latitude: Double,
-    override val longitude: Double
+    override val longitude: Double,
+    override val fromDb: Boolean = false,
+    override val mnc: String = "",
+    override val source: String = ""
 ) : Cell() {
     override val type: String = "5G NR"
 }
@@ -97,7 +106,10 @@ data class WcdmaCell(
     override val tac: Int,
     override val lastSeen: Long = System.currentTimeMillis(),
     override val latitude: Double,
-    override val longitude: Double
+    override val longitude: Double,
+    override val fromDb: Boolean = false,
+    override val mnc: String = "",
+    override val source: String = ""
 ) : Cell() {
     override val type: String = "WCDMA"
 }
@@ -117,7 +129,10 @@ data class GsmCell(
     override val tac: Int,
     override val lastSeen: Long = System.currentTimeMillis(),
     override val latitude: Double,
-    override val longitude: Double
+    override val longitude: Double,
+    override val fromDb: Boolean = false,
+    override val mnc: String = "",
+    override val source: String = ""
 ) : Cell() {
     override val type: String = "GSM"
 }
@@ -131,7 +146,14 @@ data class DiscoveredPci(
     var discoveryCount: Int,
     var lastSeen: Long,
     var isIgnored: Boolean = false,
-    var isTargeted: Boolean = false
+    var isTargeted: Boolean = false,
+    // Fields for crowdsource upload
+    var tac: Int = 0,
+    var arfcn: Int = 0,
+    var mnc: String = "",
+    var bestLat: Double = 0.0,
+    var bestLon: Double = 0.0,
+    var source: String = ""   // best source quality seen: alpha > plmn > fcc_band > db > pci_range
 )
 
 @Entity(tableName = "drive_test_points")

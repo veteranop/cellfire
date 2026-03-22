@@ -46,7 +46,7 @@ class CellRepository @Inject constructor(
             val updatedCells = if (currentState.isRecording) {
                 currentState.cells + newCells
             } else {
-                (currentState.cells + newCells).distinctBy { it.pci to it.arfcn }
+                (newCells + currentState.cells).distinctBy { it.pci to it.arfcn }
             }
             currentState.copy(cells = updatedCells, isRefreshing = false)
         }
@@ -120,6 +120,35 @@ class CellRepository @Inject constructor(
         return file
     }
 
+    /**
+     * Upload all discovered PCIs confirmed by alpha or PLMN sources to Firebase.
+     * Returns a pair of (uploaded, skipped) counts.
+     */
+    suspend fun uploadDiscoveredPcis(): Pair<Int, Int> {
+        val all = discoveredPciDao.getAll().first()
+        // Include all PCIs with GPS — carrier can be Unknown, location data is still useful
+        val valid = all.filter { it.pci > 0 && it.tac > 0 }
+        var uploaded = 0
+        var skipped = 0
+        for (pci in valid) {
+            if (pci.bestLat == 0.0 && pci.bestLon == 0.0) { skipped++; continue }
+            CrowdsourceReporter.submitBulk(
+                pci = pci.pci,
+                tac = pci.tac,
+                carrier = pci.carrier,
+                mnc = pci.mnc,
+                lat = pci.bestLat,
+                lon = pci.bestLon,
+                arfcn = pci.arfcn,
+                band = pci.band,
+                source = pci.source
+            )
+            uploaded++
+        }
+        Log.d("CellFire", "uploadDiscoveredPcis: $uploaded uploaded, $skipped skipped (no GPS)")
+        return Pair(uploaded, skipped)
+    }
+
     fun addLogLine(logLine: String) {
         val now = System.currentTimeMillis()
         val newEntry = LogEntry(now, logLine)
@@ -138,6 +167,21 @@ class CellRepository @Inject constructor(
         repositoryScope.launch {
             discoveredPciDao.clearAll()
             _uiState.update { it.copy(cells = emptyList(), signalHistory = emptyMap()) }
+        }
+    }
+
+    fun clearAllData(onDone: () -> Unit) {
+        repositoryScope.launch {
+            discoveredPciDao.clearAll()
+            driveTestPointDao.clearAll()
+            CellfireDbManager.clearCache()
+            _uiState.update {
+                CellFireUiState(
+                    allPermissionsGranted = it.allPermissionsGranted,
+                    isMonitoring = it.isMonitoring
+                )
+            }
+            kotlinx.coroutines.withContext(Dispatchers.Main) { onDone() }
         }
     }
 
@@ -171,13 +215,32 @@ class CellRepository @Inject constructor(
         }
     }
 
+    private val sourcePriority = mapOf(
+        "alpha" to 5, "plmn" to 4, "fcc_band" to 3, "db" to 2, "pci_range" to 1
+    )
+
     private suspend fun updateDiscoveredPcis(cells: List<Cell>) {
         val now = System.currentTimeMillis()
         for (cell in cells) {
             val existingPci = discoveredPciDao.getDiscoveredPci(cell.pci, cell.band)
+            val newPriority = sourcePriority.getOrDefault(cell.source, 0)
             if (existingPci != null) {
                 existingPci.discoveryCount++
                 existingPci.lastSeen = now
+                // Upgrade stored metadata if this scan has a better source
+                val existingPriority = sourcePriority.getOrDefault(existingPci.source, 0)
+                if (newPriority > existingPriority) {
+                    existingPci.source = cell.source
+                    existingPci.carrier = cell.carrier
+                    existingPci.mnc = cell.mnc
+                }
+                // Always update location and tac/arfcn when we have real GPS
+                if (cell.latitude != 0.0 || cell.longitude != 0.0) {
+                    existingPci.bestLat = cell.latitude
+                    existingPci.bestLon = cell.longitude
+                }
+                if (cell.tac > 0) existingPci.tac = cell.tac
+                if (cell.arfcn > 0) existingPci.arfcn = cell.arfcn
                 discoveredPciDao.insert(existingPci)
             } else {
                 discoveredPciDao.insert(
@@ -186,7 +249,13 @@ class CellRepository @Inject constructor(
                         carrier = cell.carrier,
                         band = cell.band,
                         discoveryCount = 1,
-                        lastSeen = now
+                        lastSeen = now,
+                        tac = cell.tac,
+                        arfcn = cell.arfcn,
+                        mnc = cell.mnc,
+                        bestLat = cell.latitude,
+                        bestLon = cell.longitude,
+                        source = cell.source
                     )
                 )
             }

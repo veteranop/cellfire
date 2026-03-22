@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.location.Geocoder
 import android.os.Build
 import android.os.Looper
 import android.telephony.*
@@ -16,6 +17,7 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.location.*
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
+import java.util.Locale
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -23,13 +25,14 @@ class CellScanService : LifecycleService() {
 
     @Inject lateinit var cellRepository: CellRepository
 
-    private val telephonyManager by lazy { getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager }
+    private val telephonyManager by lazy { getSystemService(Context.TELEPHONY_SERVICE) as `TelephonyManager` }
     private var regularJob: Job? = null
     private var deepScanJob: Job? = null
     private var currentScan: NetworkScan? = null
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var lastLatitude: Double = 0.0
     private var lastLongitude: Double = 0.0
+    private var currentState: String = ""
 
     companion object {
         const val ACTION_START = "ACTION_START"
@@ -43,6 +46,7 @@ class CellScanService : LifecycleService() {
     override fun onCreate() {
         super.onCreate()
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+        BandLicenseMap.init(this)
         createNotificationChannel()
         
         // Android 14+ requires explicit type in startForeground if declared in manifest
@@ -67,7 +71,12 @@ class CellScanService : LifecycleService() {
             }
             ACTION_REFRESH -> refresh()
         }
-        return START_STICKY
+        return START_NOT_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        stopScanning()
     }
 
     private fun startScanning() {
@@ -108,9 +117,23 @@ class CellScanService : LifecycleService() {
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(locationResult: LocationResult) {
-            locationResult.lastLocation?.let {
-                lastLatitude = it.latitude
-                lastLongitude = it.longitude
+            locationResult.lastLocation?.let { loc ->
+                lastLatitude = loc.latitude
+                lastLongitude = loc.longitude
+                lifecycleScope.launch {
+                    CellfireDbManager.refreshTiles(loc.latitude, loc.longitude)
+                }
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        @Suppress("DEPRECATION")
+                        val addresses = Geocoder(this@CellScanService, Locale.US)
+                            .getFromLocation(loc.latitude, loc.longitude, 1)
+                        val admin = addresses?.firstOrNull()?.adminArea
+                        if (!admin.isNullOrBlank()) {
+                            currentState = BandLicenseMap.stateAbbrev(admin)
+                        }
+                    } catch (_: Exception) { }
+                }
             }
         }
     }
@@ -296,26 +319,63 @@ class CellScanService : LifecycleService() {
                     if (!longName.isNullOrBlank()) longName else if (!shortName.isNullOrBlank()) shortName else "Unknown"
                 } else "Unknown"
 
+                var confirmedMnc = ""
+                var crowdsourceSource = ""
+
                 if (carrier == "Unknown" || carrier == "null") {
                     val mcc: Int?
                     val mnc: Int?
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                         mcc = identity.mccString?.toIntOrNull()
                         mnc = identity.mncString?.toIntOrNull()
+                        confirmedMnc = identity.mncString ?: ""
                     } else {
                         @Suppress("DEPRECATION")
                         mcc = identity.mcc
                         @Suppress("DEPRECATION")
                         mnc = identity.mnc
+                        confirmedMnc = mnc?.toString() ?: ""
                     }
                     carrier = if (mcc != null && mnc != null && mcc != Int.MAX_VALUE && mnc != Int.MAX_VALUE) {
+                        crowdsourceSource = "plmn"
                         plmnToCarrier(mcc, mnc)
                     } else "Unknown"
+                } else {
+                    crowdsourceSource = "alpha"
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        confirmedMnc = identity.mncString ?: ""
+                    }
                 }
 
                 val pci = if (identity.pci == Int.MAX_VALUE) 0 else identity.pci
+                val tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac
+                val dbResult = CellfireDbManager.lookupByPciTac(pci, tac)
                 if (carrier == "Unknown" || carrier == "null") {
-                    carrier = pciToCarrier(pci)
+                    val bandLabel = earfcnToLteBand(identity.earfcn)
+                    val fccCarrier = BandLicenseMap.resolveCarrier(currentState, bandLabel, identity.earfcn)
+                    carrier = dbResult?.carrier ?: fccCarrier ?: pciToCarrier(pci)
+                    crowdsourceSource = when {
+                        fccCarrier != null -> "fcc_band"
+                        dbResult != null   -> "db"
+                        else               -> "pci_range"
+                    }
+                }
+
+                // Submit every discovered cell — CrowdsourceReporter filters by quality and deduplicates
+                val crowdsourceEnabled = getSharedPreferences("CellFirePrefs", android.content.Context.MODE_PRIVATE)
+                    .getBoolean("crowdsource_enabled", true)
+                if (crowdsourceEnabled) {
+                    CrowdsourceReporter.submit(
+                        pci = pci,
+                        tac = tac,
+                        carrier = carrier,
+                        mnc = confirmedMnc,
+                        lat = lastLatitude,
+                        lon = lastLongitude,
+                        arfcn = identity.earfcn,
+                        band = earfcnToLteBand(identity.earfcn),
+                        source = crowdsourceSource
+                    )
                 }
 
                 var snr = if (strength.rssnr != Int.MAX_VALUE) strength.rssnr else strength.rsrq
@@ -335,9 +395,12 @@ class CellScanService : LifecycleService() {
                     rsrq = strength.rsrq,
                     isRegistered = info.isRegistered,
                     carrier = carrier,
-                    tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac,
+                    tac = tac,
                     latitude = lastLatitude,
-                    longitude = lastLongitude
+                    longitude = lastLongitude,
+                    fromDb = dbResult != null,
+                    mnc = confirmedMnc,
+                    source = crowdsourceSource
                 )
             }
             else -> {
@@ -346,18 +409,52 @@ class CellScanService : LifecycleService() {
                     val strength = info.cellSignalStrength as CellSignalStrengthNr
 
                     var carrier = identity.operatorAlphaLong?.toString() ?: identity.operatorAlphaShort?.toString() ?: "Unknown"
+                    var confirmedMnc = ""
+                    var crowdsourceSource = ""
 
                     if (carrier == "Unknown" || carrier == "null" || carrier.isBlank()) {
                         val mcc = identity.mccString?.toIntOrNull()
                         val mnc = identity.mncString?.toIntOrNull()
+                        confirmedMnc = identity.mncString ?: ""
                         carrier = if (mcc != null && mnc != null && mcc != Int.MAX_VALUE && mnc != Int.MAX_VALUE) {
+                            crowdsourceSource = "plmn"
                             plmnToCarrier(mcc, mnc)
                         } else "Unknown"
+                    } else {
+                        crowdsourceSource = "alpha"
+                        confirmedMnc = identity.mncString ?: ""
                     }
 
                     val pci = if (identity.pci == Int.MAX_VALUE) 0 else identity.pci
+                    val tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac
+
+                    val dbResult = CellfireDbManager.lookupByPciTac(pci, tac)
+
                     if (carrier == "Unknown" || carrier == "null" || carrier.isBlank()) {
-                        carrier = pciToCarrier(pci)
+                        val nrBand = nrarfcnToNrBand(identity.nrarfcn)
+                        val fccCarrier = BandLicenseMap.resolveCarrier(currentState, nrBand, identity.nrarfcn)
+                        carrier = dbResult?.carrier ?: fccCarrier ?: pciToCarrier(pci)
+                        crowdsourceSource = when {
+                            fccCarrier != null -> "fcc_band"
+                            dbResult != null   -> "db"
+                            else               -> "pci_range"
+                        }
+                    }
+
+                    val crowdsourceEnabled = getSharedPreferences("CellFirePrefs", android.content.Context.MODE_PRIVATE)
+                        .getBoolean("crowdsource_enabled", true)
+                    if (crowdsourceEnabled) {
+                        CrowdsourceReporter.submit(
+                            pci = pci,
+                            tac = tac,
+                            carrier = carrier,
+                            mnc = confirmedMnc,
+                            lat = lastLatitude,
+                            lon = lastLongitude,
+                            arfcn = identity.nrarfcn,
+                            band = nrarfcnToNrBand(identity.nrarfcn),
+                            source = crowdsourceSource
+                        )
                     }
 
                     val rsrp = if (strength.csiRsrp != Int.MAX_VALUE) strength.csiRsrp else strength.ssRsrp
@@ -372,15 +469,18 @@ class CellScanService : LifecycleService() {
                         pci = pci,
                         arfcn = identity.nrarfcn,
                         band = nrarfcnToNrBand(identity.nrarfcn),
-                        bandwidth = 0.0, 
+                        bandwidth = 0.0,
                         signalStrength = rsrp,
                         signalQuality = snr,
                         rsrq = rsrq,
                         isRegistered = info.isRegistered,
                         carrier = carrier,
-                        tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac,
+                        tac = tac,
                         latitude = lastLatitude,
-                        longitude = lastLongitude
+                        longitude = lastLongitude,
+                        fromDb = dbResult != null,
+                        mnc = confirmedMnc,
+                        source = crowdsourceSource
                     )
                 } else if (info is CellInfoWcdma) {
                     val identity = info.cellIdentity
@@ -428,14 +528,14 @@ class CellScanService : LifecycleService() {
     private fun pciToCarrier(pci: Int): String {
         return when (pci) {
             in 0..107   -> "T-Mobile"
-            in 108..179 -> "T-Mobile (low-band)"
+            in 108..179 -> "T-Mobile"
             in 180..251 -> "Verizon"
-            in 252..287 -> "Verizon (B5)"
+            in 252..287 -> "Verizon"
             in 288..359 -> "AT&T"
             in 360..395 -> "FirstNet"
             in 396..431 -> "Dish Wireless"
             in 432..467 -> "US Cellular"
-            else        -> "Unknown / Other"
+            else        -> "Unknown"
         }
     }
 
@@ -487,17 +587,26 @@ class CellScanService : LifecycleService() {
     }
 
     private fun nrarfcnToNrBand(nrarfcn: Int): String {
-        return when (nrarfcn) {
-            in 620000..636666 -> "n77"
-            in 636667..646666 -> "n78"
-            in 509202..537999 -> "n41"
-            in 122400..131400 -> "n71"
-            in 2289252..2308333 -> "n260"
-            in 2269584..2289251 -> "n261"
-            in 418000..434000 -> "n25"
-            in 384000..404000 -> "n66"
-            in 370000..384000 -> "n2"
-            in 173800..178000 -> "n5"
+        // NR-ARFCN formula (3GPP TS 38.104):
+        //   0–599999:       F = ARFCN × 0.005 MHz   (sub-6 GHz lower)
+        //   600000–2016666: F = 3000 + (ARFCN−600000) × 0.015 MHz
+        //   2016667+:       F = 24250.08 + (ARFCN−2016667) × 0.06 MHz (mmWave)
+        return when {
+            // mmWave — third range
+            nrarfcn >= 2229165 -> "n260"  // 37000–40000 MHz (39 GHz)
+            nrarfcn >= 2070832 -> "n261"  // 27500–28350 MHz (28 GHz)
+            // C-band / mid-band — second range (F = 3000 + (arfcn−600000)*0.015)
+            nrarfcn in 646667..665333 -> "n77"  // 3700–3980 MHz US C-band
+            nrarfcn in 620000..646666 -> "n78"  // 3300–3700 MHz
+            // Sub-6 GHz — first range (F = arfcn × 0.005)
+            nrarfcn in 499200..538000 -> "n41"  // 2496–2690 MHz TDD (T-Mobile midband)
+            nrarfcn in 422000..440000 -> "n66"  // 2110–2200 MHz AWS DL
+            nrarfcn in 386000..399000 -> "n25"  // 1930–1995 MHz PCS DL
+            nrarfcn in 173800..178800 -> "n5"   // 869–894 MHz 850 MHz DL
+            nrarfcn in 151600..153600 -> "n14"  // 758–768 MHz 700 Upper E DL (AT&T/FirstNet)
+            nrarfcn in 149200..151400 -> "n13"  // 746–757 MHz 700 Upper C DL (Verizon)
+            nrarfcn in 145800..149200 -> "n12"  // 729–746 MHz 700 Lower A/B DL
+            nrarfcn in 123400..130400 -> "n71"  // 617–652 MHz 600 MHz DL (T-Mobile dominant)
             else -> "n??"
         }
     }

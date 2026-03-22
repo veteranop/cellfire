@@ -172,6 +172,17 @@ class CellFireViewModel @Inject constructor(
         cellRepository.clearPciHistory()
     }
 
+    fun clearAllData(onDone: () -> Unit) {
+        cellRepository.clearAllData(onDone)
+    }
+
+    fun uploadDiscovered(onResult: (uploaded: Int, skipped: Int) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val (uploaded, skipped) = cellRepository.uploadDiscoveredPcis()
+            withContext(Dispatchers.Main) { onResult(uploaded, skipped) }
+        }
+    }
+
     fun setDriveTestMode(enabled: Boolean) {
         viewModelScope.launch {
             cellRepository.setDriveTestMode(enabled)
