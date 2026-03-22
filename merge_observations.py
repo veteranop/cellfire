@@ -473,8 +473,12 @@ def load_tile(filepath: Path) -> list:
         except Exception as e:
             log.warning(f"Could not seed {filepath.name} from server: {e}")
             return []
-    with gzip.open(filepath, "rt", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with gzip.open(filepath, "rt", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, EOFError, gzip.BadGzipFile, OSError) as e:
+        log.warning(f"Skipping corrupt tile {filepath.name}: {e}")
+        return []
 
 
 def save_tile(filepath: Path, records: list):
@@ -652,13 +656,46 @@ def main():
              f"{len(set(k for k,_ in processed_keys))} tiles ===")
 
 
+def reprocess_all():
+    """
+    Re-run backfill_conf + infer_neighbor_carriers on every tile already on
+    disk without requiring new Firebase observations. Use this after updating
+    the inference logic to apply new scoring to existing tile data.
+    """
+    tiles_path = Path(CELLFIRE_FILES_PATH)
+    tile_files = sorted(tiles_path.glob("grid_*.json.gz"))
+    log.info(f"=== Reprocess-all: {len(tile_files)} tiles in {tiles_path} ===")
+
+    changed = 0
+    for fp in tile_files:
+        records = load_tile(fp)
+        if not records:
+            continue
+
+        before = json.dumps(records, sort_keys=True)
+        records = backfill_conf(records)
+        records = infer_neighbor_carriers(records)
+        after = json.dumps(records, sort_keys=True)
+
+        if after != before:
+            save_tile(fp, records)
+            changed += 1
+            log.info(f"  Updated {fp.name} ({len(records)} records)")
+
+    log.info(f"=== Reprocess-all done: {changed}/{len(tile_files)} tiles updated ===")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Cellfire observation merge")
     parser.add_argument("--loop", type=int, metavar="SECONDS",
                         help="Re-run every N seconds (drive-test mode)")
+    parser.add_argument("--reprocess-all", action="store_true",
+                        help="Re-score all tiles on disk with current inference logic")
     args = parser.parse_args()
 
-    if args.loop:
+    if args.reprocess_all:
+        reprocess_all()
+    elif args.loop:
         log.info(f"Loop mode: running every {args.loop}s — Ctrl+C to stop")
         while True:
             try:
