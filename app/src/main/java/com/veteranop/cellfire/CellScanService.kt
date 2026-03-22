@@ -353,15 +353,27 @@ class CellScanService : LifecycleService() {
                 if (carrier == "Unknown" || carrier == "null") {
                     val bandLabel = earfcnToLteBand(identity.earfcn)
                     val fccCarrier = BandLicenseMap.resolveCarrier(currentState, bandLabel, identity.earfcn)
-                    val rawCarrier = dbResult?.carrier ?: fccCarrier ?: pciToCarrier(pci)
-                    // Reject carrier if incompatible with this band (e.g. Verizon on B12).
-                    // Pass bandLabel so we use the full lte_band_to_carrier table, not just
-                    // the incomplete earfcn_ranges subset in the JSON.
-                    carrier = if (CarrierResolver.isCarrierValidForBand(rawCarrier, identity.earfcn, bandLabel)) rawCarrier else "Unknown"
-                    crowdsourceSource = when {
-                        fccCarrier != null -> "fcc_band"
-                        dbResult != null   -> "db"
-                        else               -> "pci_range"
+                    when {
+                        // FCC license match is ground truth — band+EARFCN+geo verified,
+                        // no further validation needed. Takes priority over stale DB records.
+                        fccCarrier != null -> {
+                            carrier = fccCarrier
+                            crowdsourceSource = "fcc_band"
+                        }
+                        // DB result: validate against band — OCID data can be stale/wrong
+                        // (e.g. Verizon tagged on B12 which Verizon doesn't use).
+                        dbResult != null -> {
+                            carrier = if (CarrierResolver.isCarrierValidForBand(
+                                    dbResult.carrier, identity.earfcn, bandLabel)) dbResult.carrier else "Unknown"
+                            crowdsourceSource = "db"
+                        }
+                        // PCI range guess: validate against band before using
+                        else -> {
+                            val pciCarrier = pciToCarrier(pci)
+                            carrier = if (CarrierResolver.isCarrierValidForBand(
+                                    pciCarrier, identity.earfcn, bandLabel)) pciCarrier else "Unknown"
+                            crowdsourceSource = "pci_range"
+                        }
                     }
                 }
 
@@ -437,13 +449,22 @@ class CellScanService : LifecycleService() {
                     if (carrier == "Unknown" || carrier == "null" || carrier.isBlank()) {
                         val nrBand = nrarfcnToNrBand(identity.nrarfcn)
                         val fccCarrier = BandLicenseMap.resolveCarrier(currentState, nrBand, identity.nrarfcn)
-                        val rawCarrier = dbResult?.carrier ?: fccCarrier ?: pciToCarrier(pci)
-                        // Reject carrier if incompatible with this NR band
-                        carrier = if (CarrierResolver.isCarrierValidForBand(rawCarrier, identity.nrarfcn, nrBand, isNr = true)) rawCarrier else "Unknown"
-                        crowdsourceSource = when {
-                            fccCarrier != null -> "fcc_band"
-                            dbResult != null   -> "db"
-                            else               -> "pci_range"
+                        when {
+                            fccCarrier != null -> {
+                                carrier = fccCarrier
+                                crowdsourceSource = "fcc_band"
+                            }
+                            dbResult != null -> {
+                                carrier = if (CarrierResolver.isCarrierValidForBand(
+                                        dbResult.carrier, identity.nrarfcn, nrBand, isNr = true)) dbResult.carrier else "Unknown"
+                                crowdsourceSource = "db"
+                            }
+                            else -> {
+                                val pciCarrier = pciToCarrier(pci)
+                                carrier = if (CarrierResolver.isCarrierValidForBand(
+                                        pciCarrier, identity.nrarfcn, nrBand, isNr = true)) pciCarrier else "Unknown"
+                                crowdsourceSource = "pci_range"
+                            }
                         }
                     }
 
