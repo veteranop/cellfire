@@ -77,12 +77,13 @@ object CrowdsourceReporter {
             "processed" to false
         )
 
+        // Use pci_tac as the node key so the same cell always overwrites itself — no duplicates.
+        val nodeKey = "${pci}_${tac}"
         Log.d(TAG, "Submitting PCI=$pci TAC=$tac carrier=$carrier source=$source tile=$tileKey")
-        db.getReference("observations/$tileKey")
-            .push()
+        db.getReference("observations/$tileKey/$nodeKey")
             .setValue(observation)
             .addOnSuccessListener {
-                Log.d(TAG, "SUCCESS PCI=$pci TAC=$tac → $tileKey")
+                Log.d(TAG, "SUCCESS PCI=$pci TAC=$tac → $tileKey/$nodeKey")
             }
             .addOnFailureListener { e ->
                 Log.w(TAG, "FAILED PCI=$pci TAC=$tac: ${e.message}")
@@ -111,8 +112,9 @@ object CrowdsourceReporter {
             "source" to source, "timestamp" to System.currentTimeMillis(), "processed" to false
         )
 
-        Log.d(TAG, "Bulk submit PCI=$pci TAC=$tac carrier=$carrier tile=$tileKey")
-        db.getReference("observations/$tileKey").push().setValue(observation)
+        val nodeKey = "${pci}_${tac}"
+        Log.d(TAG, "Bulk submit PCI=$pci TAC=$tac carrier=$carrier tile=$tileKey/$nodeKey")
+        db.getReference("observations/$tileKey/$nodeKey").setValue(observation)
             .addOnSuccessListener { Log.d(TAG, "Bulk SUCCESS PCI=$pci TAC=$tac") }
             .addOnFailureListener { e -> Log.w(TAG, "Bulk FAILED PCI=$pci: ${e.message}") }
     }

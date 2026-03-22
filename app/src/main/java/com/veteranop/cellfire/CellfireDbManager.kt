@@ -13,13 +13,15 @@ import java.util.Locale
 import kotlin.math.*
 
 enum class DbMatchLevel {
-    /** PCI + TAC matched exactly — registered device confirmed this cell. */
+    /** conf == 100 — registered device confirmed this cell (alpha/plmn). Blue. */
     EXACT,
-    /** PCI matched, TAC unavailable — only one carrier holds this PCI in the loaded tiles. */
-    PCI_ONLY,
-    /** PCI matched, but two or more carriers share this PCI in the loaded tiles — ambiguous. */
-    AMBIGUOUS,
-    /** No record for this PCI in any loaded tile. */
+    /** conf 75–99 — strong crowd or FCC confirmation. Green. */
+    HIGH_CONF,
+    /** conf 40–74 — OCID-seeded or PCI-only unambiguous match. Yellow. */
+    MED_CONF,
+    /** conf 1–39 — pci_range guess or very sparse data. Red. */
+    LOW_CONF,
+    /** No record for this PCI in any loaded tile. Grey. */
     NONE
 }
 
@@ -33,7 +35,9 @@ data class DbCell(
     val cellid: Long,
     val tac: Int,
     val range: Int,
-    val samples: Int
+    val samples: Int,
+    val conf: Int = 0,      // 0–100 confidence score computed server-side
+    val source: String = "" // source tag that earned this record its score
 )
 
 object CellfireDbManager {
@@ -187,9 +191,29 @@ object CellfireDbManager {
      *  NONE      — no record for this PCI in any loaded tile
      */
     fun lookupMatchLevel(pci: Int, tac: Int): DbMatchLevel {
-        if (lookup[packKey(pci, tac)] != null || tacLookup[tac] != null) return DbMatchLevel.EXACT
+        val exact = lookup[packKey(pci, tac)] ?: tacLookup[tac]
+        if (exact != null) {
+            return confToLevel(exact.conf)
+        }
+        // No TAC match — try PCI-only
         val carriers = pciCarrierSets[pci] ?: return DbMatchLevel.NONE
-        return if (carriers.size == 1) DbMatchLevel.PCI_ONLY else DbMatchLevel.AMBIGUOUS
+        return if (carriers.size == 1) {
+            // Unambiguous PCI: use best cell's conf score but cap at MED_CONF
+            // (no TAC confirmation, so can't be HIGH_CONF or EXACT)
+            // conf=0 (unscored legacy) still shows MED_CONF so user sees it's in DB
+            val bestConf = pciCells[pci]?.conf ?: 0
+            if (bestConf >= 40 || bestConf == 0) DbMatchLevel.MED_CONF else DbMatchLevel.LOW_CONF
+        } else {
+            // Multiple carriers share this PCI — ambiguous
+            DbMatchLevel.MED_CONF
+        }
+    }
+
+    private fun confToLevel(conf: Int): DbMatchLevel = when {
+        conf == 100  -> DbMatchLevel.EXACT
+        conf >= 75   -> DbMatchLevel.HIGH_CONF
+        conf >= 40   -> DbMatchLevel.MED_CONF
+        else         -> DbMatchLevel.LOW_CONF  // conf 1–39 OR 0 (unscored legacy tile) — in DB but low trust
     }
 
     // ── private ──────────────────────────────────────────────────────────────

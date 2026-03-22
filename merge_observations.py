@@ -5,6 +5,19 @@ Cellfire DB Merge Script
 Reads crowd-sourced observations from Firebase Realtime Database and merges
 them into the cellfire-db tile .json.gz files on cellfire.io.
 
+Confidence scoring (stored as "conf" field, 0-100 on every tile record):
+    100  alpha / plmn — registered device, modem-confirmed carrier
+     90  fcc_band     — exclusive band, only one carrier possible
+     70  db           — confirmed by crowd but source unknown / older entry
+     20  pci_range    — hardcoded bucket guess, very low trust
+     40  (seed)       — OCID-seeded with no source info
+
+  Modifiers applied on top of base score:
+    +0..+15  sample count boost  (log2 scale, caps at 20 samples)
+    -20      carrier conflict    (new alpha/plmn disagrees with stored carrier)
+    -10      PCI collision       (same PCI seen with 2+ carriers in this tile)
+    Score is always clamped 0–100.
+
 Requirements:
     pip install firebase-admin requests
 
@@ -13,10 +26,7 @@ Setup:
        Firebase Console → Project Settings → Service Accounts → Generate new private key
     2. Save it as serviceAccountKey.json in the same directory as this script
     3. Set CELLFIRE_FILES_PATH to a local working directory for tile files
-    4. Generate a Joomla API token:
-         Joomla Admin → Users → Manage → click your user → API Token tab → copy token
-    5. Set JOOMLA_API_TOKEN below
-    6. Run: python3 merge_observations.py
+    4. Run: python3 merge_observations.py
 
 Run continuously while drive-testing:
     python3 merge_observations.py --loop 30    (re-runs every 30 seconds)
@@ -31,6 +41,7 @@ import logging
 import time
 import argparse
 import urllib.request
+from collections import defaultdict
 from pathlib import Path
 from datetime import datetime
 
@@ -46,28 +57,123 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 SERVICE_ACCOUNT_KEY = "serviceAccountKey.json"
 FIREBASE_DATABASE_URL = "https://veteranopcom-default-rtdb.firebaseio.com"
 
-# Absolute path to the cellfire-db directory on the server
-CELLFIRE_FILES_PATH = "/home1/veterap2/public_html/website_9695cd55/files/cellfire-db"
+# LOCAL_MODE = True  → tiles saved to LOCAL_TILES_PATH, no upload to server
+# LOCAL_MODE = False → tiles uploaded to server via cPanel after merge
+LOCAL_MODE = False
+
+# Local working directory for tiles (used in LOCAL_MODE and as a download cache)
+LOCAL_TILES_PATH = "cellfire-tiles"
+
+# Absolute path on the server (used when running ON the server, LOCAL_MODE=False)
+SERVER_FILES_PATH = "/home1/veterap2/public_html/website_9695cd55/files/cellfire-db"
+
+# Resolved at runtime: local dir when LOCAL_MODE, server path otherwise
+CELLFIRE_FILES_PATH = LOCAL_TILES_PATH if LOCAL_MODE else SERVER_FILES_PATH
 
 # Base URL to fetch existing tiles from if not present locally
 CELLFIRE_BASE_URL = "https://cellfire.io/files/cellfire-db/"
 
-# cPanel UAPI — used for direct file upload to the server
-CPANEL_HOST      = "just2029.justhost.com:2083"
-CPANEL_USER      = "veterap2"
-CPANEL_TOKEN     = "ZSKZZ5Q31MSH1BHC9TDUN3ZVDZNIDFUH"
-CPANEL_UPLOAD_DIR = "/public_html/files/cellfire-db"
+# cPanel UAPI — used for direct file upload to the server (LOCAL_MODE=False only)
+CPANEL_HOST       = "just2029.justhost.com:2083"
+CPANEL_USER       = "veterap2"
+CPANEL_TOKEN      = "ZSKZZ5Q31MSH1BHC9TDUN3ZVDZNIDFUH"
+CPANEL_UPLOAD_DIR = "/public_html/website_9695cd55/files/cellfire-db"  # corrected path
 
 TILE_SIZE = 0.5  # degrees
-MIN_SAMPLES_TO_TRUST = 1  # lower = more permissive crowd-sourcing
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("cellfire_merge")
 
-# ── Firebase init ────────────────────────────────────────────────────────────
+# ── Confidence scoring ───────────────────────────────────────────────────────
 
-cred = credentials.Certificate(SERVICE_ACCOUNT_KEY)
-firebase_admin.initialize_app(cred, {"databaseURL": FIREBASE_DATABASE_URL})
+# Base score per source tag (from CrowdsourceReporter / CellScanService)
+SOURCE_BASE_SCORE = {
+    "alpha":     100,   # operatorAlphaLong — registered modem confirmation
+    "plmn":      100,   # MCC+MNC table match on registered cell
+    "fcc_band":   90,   # exclusive band (B13/B14/B71) — no ambiguity possible
+    "db":         70,   # confirmed by a prior crowd observation, source lost
+    "pci_range":  20,   # hardcoded PCI bucket — educated guess only
+}
+SOURCE_BASE_DEFAULT = 40  # OCID-seeded records with no source field
+
+
+def _sample_boost(samples: int) -> int:
+    """
+    +0..+15 bonus based on sample count, log2 scale.
+    0 samples → 0, 1 → 5, 4 → 10, 20+ → 15
+    """
+    if samples <= 0:
+        return 0
+    return min(15, int(math.log2(samples + 1) * 5))
+
+
+def compute_conf(source: str, samples: int) -> int:
+    """Compute confidence score for a NEW record being inserted into a tile."""
+    base = SOURCE_BASE_SCORE.get(source, SOURCE_BASE_DEFAULT)
+    score = base + _sample_boost(samples)
+    return max(0, min(100, score))
+
+
+def update_conf(existing_rec: dict, obs_source: str, obs_carrier: str) -> int:
+    """
+    Update confidence for an EXISTING record given a new incoming observation.
+
+    Rules:
+    - New alpha/plmn always wins and raises conf toward 100
+    - Lower-quality sources only raise conf by a small sample boost
+    - Carrier conflict with a trusted obs → conf penalty
+    """
+    current_conf = existing_rec.get("conf", SOURCE_BASE_DEFAULT)
+    stored_carrier = existing_rec.get("carrier", "")
+    samples = existing_rec.get("samples", 1)
+    obs_base = SOURCE_BASE_SCORE.get(obs_source, SOURCE_BASE_DEFAULT)
+
+    if obs_source in ("alpha", "plmn"):
+        # Registered phone — this is ground truth
+        if stored_carrier and stored_carrier != obs_carrier and stored_carrier != "Unknown":
+            # Carrier conflict: the stored label was wrong, penalize before reset
+            new_conf = max(obs_base, current_conf - 20)
+        else:
+            # Agreement or first real confirmation
+            new_conf = max(obs_base + _sample_boost(samples), current_conf)
+        # Pull toward 100 for each additional alpha/plmn confirmation
+        new_conf = min(100, new_conf + 2)
+    elif obs_source == "fcc_band":
+        new_conf = max(obs_base + _sample_boost(samples), current_conf)
+    else:
+        # db / pci_range / unknown — only a small sample boost, never lower conf
+        new_conf = max(current_conf, current_conf + 1)
+
+    return max(0, min(100, new_conf))
+
+
+def backfill_conf(records: list) -> list:
+    """
+    Assign an initial 'conf' score to OCID-seeded records that don't have one yet.
+    Also applies a PCI-collision penalty when multiple carriers share the same PCI
+    in this tile.
+    """
+    # Detect PCI collisions within the tile
+    pci_carriers: dict = defaultdict(set)
+    for rec in records:
+        pci = rec.get("pci", 0)
+        carrier = rec.get("carrier", "")
+        if pci > 0 and carrier and carrier != "Unknown":
+            pci_carriers[pci].add(carrier)
+
+    collision_pcis = {pci for pci, carriers in pci_carriers.items() if len(carriers) > 1}
+
+    for rec in records:
+        if "conf" not in rec:
+            source = rec.get("source", "")
+            samples = rec.get("samples", 1)
+            base = compute_conf(source, samples)
+            # Collision penalty
+            if rec.get("pci", 0) in collision_pcis:
+                base -= 10
+            rec["conf"] = max(0, min(100, base))
+
+    return records
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -132,7 +238,7 @@ def _band_to_int(band: str) -> int:
 def merge_observation(records: list, obs: dict) -> list:
     """
     Merge a single observation into the records list.
-    Matches on (pci, tac). Updates carrier/mnc if obs has more samples,
+    Matches on (pci, tac). Updates carrier/conf/mnc if obs has better source,
     or inserts as a new record if not found.
     """
     pci = obs.get("pci")
@@ -140,33 +246,52 @@ def merge_observation(records: list, obs: dict) -> list:
     if pci is None or tac is None:
         return records
 
+    obs_source  = obs.get("source", "")
+    obs_carrier = obs.get("carrier", "Unknown")
+    obs_base    = SOURCE_BASE_SCORE.get(obs_source, SOURCE_BASE_DEFAULT)
+
     for rec in records:
         if rec.get("pci") == pci and rec.get("tac") == tac:
-            # Existing record — increment samples and update carrier if confirmed
+            # ── Existing record ──────────────────────────────────────────────
             rec["samples"] = rec.get("samples", 1) + 1
-            if obs.get("source") in ("alpha", "plmn", "fcc_band"):
-                rec["carrier"] = obs["carrier"]
+
+            # Update carrier only when incoming source is more trusted
+            stored_base = SOURCE_BASE_SCORE.get(rec.get("source", ""), SOURCE_BASE_DEFAULT)
+            if obs_base >= stored_base and obs_carrier != "Unknown":
+                rec["carrier"] = obs_carrier
+                rec["source"]  = obs_source
                 if obs.get("mnc"):
                     rec["mnc"] = obs["mnc"]
-            # Update location as running average
+
+            # Update location as running average weighted by samples
             n = rec["samples"]
             rec["lat"] = ((rec.get("lat", obs["lat"]) * (n - 1)) + obs["lat"]) / n
             rec["lon"] = ((rec.get("lon", obs["lon"]) * (n - 1)) + obs["lon"]) / n
+
+            # Recompute confidence
+            rec["conf"] = update_conf(rec, obs_source, obs_carrier)
+
+            log.debug(f"  Updated pci={pci} tac={tac} carrier={rec['carrier']} "
+                      f"conf={rec['conf']} samples={rec['samples']}")
             return records
 
-    # New record not in existing tile
+    # ── New record ───────────────────────────────────────────────────────────
     new_rec = {
         "pci":            pci,
         "mnc":            obs.get("mnc", ""),
-        "carrier":        obs.get("carrier", "Unknown"),
+        "carrier":        obs_carrier,
         "lat":            obs.get("lat", 0.0),
         "lon":            obs.get("lon", 0.0),
         "cellid":         0,
         "tac":            tac,
         "range":          0,
         "samples":        1,
-        "possible_bands": [_band_to_int(obs["band"])] if obs.get("band") else []
+        "source":         obs_source,
+        "possible_bands": [_band_to_int(obs["band"])] if obs.get("band") else [],
+        "conf":           compute_conf(obs_source, 1),
     }
+    log.debug(f"  New record pci={pci} tac={tac} carrier={obs_carrier} "
+              f"source={obs_source} conf={new_rec['conf']}")
     records.append(new_rec)
     return records
 
@@ -196,9 +321,26 @@ def upload_tile(filepath: Path):
         log.warning(f"Upload {filepath.name} error: {e}")
 
 
+# ── Firebase init ────────────────────────────────────────────────────────────
+
+def init_firebase():
+    """Initialize Firebase once. Safe to call multiple times in loop mode."""
+    if not firebase_admin._apps:
+        key_path = Path(SERVICE_ACCOUNT_KEY)
+        if not key_path.exists():
+            raise FileNotFoundError(
+                f"Firebase service account key not found: {key_path.resolve()}\n"
+                "Download it from Firebase Console → Project Settings → Service Accounts."
+            )
+        cred = credentials.Certificate(str(key_path))
+        firebase_admin.initialize_app(cred, {"databaseURL": FIREBASE_DATABASE_URL})
+        log.info("Firebase initialized.")
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    init_firebase()
     log.info("=== Cellfire merge started ===")
     obs_ref = firebase_db.reference("observations")
     all_tiles = obs_ref.get()
@@ -207,13 +349,14 @@ def main():
         log.info("No observations in Firebase.")
         return
 
-    processed_keys = []  # (tile_key, push_id) pairs to mark processed
+    processed_keys = []  # (tile_key, node_key) pairs to delete after merge
 
     for tile_key, pushes in all_tiles.items():
         if not isinstance(pushes, dict):
             continue
 
-        unprocessed = {pid: obs for pid, obs in pushes.items()
+        # Unprocessed = processed flag is absent or False
+        unprocessed = {nid: obs for nid, obs in pushes.items()
                        if isinstance(obs, dict) and not obs.get("processed", False)}
 
         if not unprocessed:
@@ -221,22 +364,26 @@ def main():
 
         log.info(f"Tile {tile_key}: {len(unprocessed)} new observations")
 
-        # Load existing tile records
+        # Load existing tile records and backfill any missing conf scores
         filepath = Path(CELLFIRE_FILES_PATH) / firebase_key_to_filename(tile_key)
         records = load_tile(filepath)
+        records = backfill_conf(records)
 
-        for push_id, obs in unprocessed.items():
+        for node_key, obs in unprocessed.items():
             records = merge_observation(records, obs)
-            processed_keys.append((tile_key, push_id))
+            processed_keys.append((tile_key, node_key))
 
         save_tile(filepath, records)
-        upload_tile(filepath)
+        if not LOCAL_MODE:
+            upload_tile(filepath)
+        else:
+            log.info(f"LOCAL_MODE: skipping upload for {filepath.name} — set LOCAL_MODE=False to push to server")
 
-    # Mark processed in Firebase
-    for tile_key, push_id in processed_keys:
-        firebase_db.reference(f"observations/{tile_key}/{push_id}/processed").set(True)
+    # Delete processed entries from Firebase — keeps the DB clean, no accumulation
+    for tile_key, node_key in processed_keys:
+        firebase_db.reference(f"observations/{tile_key}/{node_key}").delete()
 
-    log.info(f"=== Done. Processed {len(processed_keys)} observations across "
+    log.info(f"=== Done. Merged and deleted {len(processed_keys)} observations across "
              f"{len(set(k for k,_ in processed_keys))} tiles ===")
 
 

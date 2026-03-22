@@ -294,7 +294,24 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                                     .clickable { navController.navigate("detail/${cell.pci}/${cell.arfcn}") }
                                     .padding(12.dp)
         ) {
-                                Text(text = cell.carrier.uppercase(), modifier = Modifier.weight(1.6f), fontWeight = if (cell.isRegistered) FontWeight.ExtraBold else FontWeight.Normal, color = Color.White)
+                                val rowMatchLevel = remember(cell.pci, cell.tac) {
+                                    CellfireDbManager.lookupMatchLevel(cell.pci, cell.tac)
+                                }
+                                val dotColor = when (rowMatchLevel) {
+                                    DbMatchLevel.EXACT     -> Color(0xFF2196F3)
+                                    DbMatchLevel.HIGH_CONF -> Color(0xFF4CAF50)
+                                    DbMatchLevel.MED_CONF  -> Color(0xFFFFC107)
+                                    DbMatchLevel.LOW_CONF  -> Color(0xFFF44336)
+                                    DbMatchLevel.NONE      -> Color(0xFF9E9E9E)
+                                }
+                                Text(
+                                    text = "● ",
+                                    color = dotColor,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.alignByBaseline()
+                                )
+                                Text(text = cell.carrier.uppercase(), modifier = Modifier.weight(1.6f), fontWeight = if (cell.isRegistered) FontWeight.ExtraBold else FontWeight.Normal,
+                                    color = if (cell.source == "pci_range") Color(0xFFFFC107) else Color.White)
                                 Text(text = cell.band, modifier = Modifier.weight(0.8f), color = Color.White)
                                 Text(text = cell.pci.toString(), modifier = Modifier.weight(0.8f), color = Color.White)
                                 Text(text = if (cell.bandwidth > 0) "${cell.bandwidth.toInt()}" else "-", modifier = Modifier.weight(0.7f), color = Color.White)
@@ -372,10 +389,11 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                         Text(
                             "●",
                             color = when (matchLevel) {
-                                DbMatchLevel.EXACT     -> Color(0xFF2196F3) // Blue  — PCI+TAC confirmed
-                                DbMatchLevel.PCI_ONLY  -> Color(0xFF4CAF50) // Green — PCI confirmed, single carrier
-                                DbMatchLevel.AMBIGUOUS -> Color(0xFFF44336) // Red   — PCI collision, multiple carriers
-                                DbMatchLevel.NONE      -> Color(0xFF9E9E9E) // Grey  — not in DB
+                                DbMatchLevel.EXACT      -> Color(0xFF2196F3) // Blue   — conf 100, registered device confirmed
+                                DbMatchLevel.HIGH_CONF  -> Color(0xFF4CAF50) // Green  — conf 75–99, strong crowd/FCC
+                                DbMatchLevel.MED_CONF   -> Color(0xFFFFC107) // Yellow — conf 40–74, OCID seed or PCI-only
+                                DbMatchLevel.LOW_CONF   -> Color(0xFFF44336) // Red    — conf <40, pci_range guess
+                                DbMatchLevel.NONE       -> Color(0xFF9E9E9E) // Grey   — not in DB
                             },
                             style = MaterialTheme.typography.labelSmall
                         )

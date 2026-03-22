@@ -42,11 +42,14 @@ class CellRepository @Inject constructor(
     }
 
     fun updateCells(newCells: List<Cell>) {
+        val cutoff = System.currentTimeMillis() - 50_000L  // 10 polls × 5 s
         _uiState.update { currentState ->
             val updatedCells = if (currentState.isRecording) {
                 currentState.cells + newCells
             } else {
-                (newCells + currentState.cells).distinctBy { it.pci to it.arfcn }
+                (newCells + currentState.cells)
+                    .distinctBy { it.pci to it.arfcn }
+                    .filter { it.lastSeen >= cutoff }   // drop anything not seen in last 10 polls
             }
             currentState.copy(cells = updatedCells, isRefreshing = false)
         }
