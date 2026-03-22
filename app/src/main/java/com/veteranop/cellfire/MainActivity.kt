@@ -366,12 +366,17 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Carrier: ${currentCell.carrier}", color = Color.White)
                         Spacer(modifier = Modifier.width(8.dp))
-                        val isInDb = remember(currentCell.pci, currentCell.tac) {
-                            CellfireDbManager.lookupByPciTac(currentCell.pci, currentCell.tac) != null
+                        val matchLevel = remember(currentCell.pci, currentCell.tac) {
+                            CellfireDbManager.lookupMatchLevel(currentCell.pci, currentCell.tac)
                         }
                         Text(
                             "●",
-                            color = if (isInDb) Color(0xFF4CAF50) else Color(0xFFF44336),
+                            color = when (matchLevel) {
+                                DbMatchLevel.EXACT     -> Color(0xFF2196F3) // Blue  — PCI+TAC confirmed
+                                DbMatchLevel.PCI_ONLY  -> Color(0xFF4CAF50) // Green — PCI confirmed, single carrier
+                                DbMatchLevel.AMBIGUOUS -> Color(0xFFF44336) // Red   — PCI collision, multiple carriers
+                                DbMatchLevel.NONE      -> Color(0xFF9E9E9E) // Grey  — not in DB
+                            },
                             style = MaterialTheme.typography.labelSmall
                         )
                     }

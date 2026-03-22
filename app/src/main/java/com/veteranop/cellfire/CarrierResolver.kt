@@ -129,6 +129,15 @@ object CarrierResolver {
         }
     }
 
+    /**
+     * Returns true if [carrier] is known to operate on the band associated with [earfcn].
+     * Returns true (permissive) if band data is unavailable so we don't over-filter.
+     */
+    fun isCarrierValidForBand(carrier: String, earfcn: Int, isNr: Boolean = false): Boolean {
+        val validCarriers = resolveFromBand(earfcn, isNr) ?: return true  // no data → allow
+        return carrier in validCarriers
+    }
+
     // Helper for consistent PCI naming (e.g., for UI/logs)
     fun formatPciName(cell: Cell): String {
         val carrier = cell.carrier.takeIf { it != "Unknown" } ?: "?"

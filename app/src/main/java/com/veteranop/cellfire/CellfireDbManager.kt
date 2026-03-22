@@ -12,6 +12,17 @@ import java.util.zip.GZIPInputStream
 import java.util.Locale
 import kotlin.math.*
 
+enum class DbMatchLevel {
+    /** PCI + TAC matched exactly — registered device confirmed this cell. */
+    EXACT,
+    /** PCI matched, TAC unavailable — only one carrier holds this PCI in the loaded tiles. */
+    PCI_ONLY,
+    /** PCI matched, but two or more carriers share this PCI in the loaded tiles — ambiguous. */
+    AMBIGUOUS,
+    /** No record for this PCI in any loaded tile. */
+    NONE
+}
+
 @Serializable
 data class DbCell(
     val pci: Int,
@@ -57,6 +68,12 @@ object CellfireDbManager {
 
     // tac -> DbCell for records where pci is unknown (-1 or 0) in source data
     private val tacLookup = HashMap<Int, DbCell>()
+
+    // pci -> set of carrier names seen across all loaded tiles (for ambiguity detection)
+    private val pciCarrierSets = HashMap<Int, MutableSet<String>>()
+
+    // pci -> best DbCell by sample count (for PCI-only lookups)
+    private val pciCells = HashMap<Int, DbCell>()
 
     @Volatile private var lastCenterLat = Double.NaN
     @Volatile private var lastCenterLon = Double.NaN
@@ -135,6 +152,8 @@ object CellfireDbManager {
         tileCache.clear()
         lookup.clear()
         tacLookup.clear()
+        pciCarrierSets.clear()
+        pciCells.clear()
         lastCenterLat = Double.NaN
         lastCenterLon = Double.NaN
     }
@@ -149,11 +168,37 @@ object CellfireDbManager {
         return result
     }
 
+    /**
+     * PCI-only lookup for neighbor cells where TAC is unavailable.
+     * Returns the best DbCell only when exactly ONE carrier holds this PCI in the loaded tiles.
+     * Returns null if ambiguous (multiple carriers share this PCI) or not found.
+     */
+    fun lookupByPciOnly(pci: Int): DbCell? {
+        val carriers = pciCarrierSets[pci] ?: return null
+        return if (carriers.size == 1) pciCells[pci] else null
+    }
+
+    /**
+     * Returns the confidence level of a DB match for display purposes.
+     *
+     *  EXACT     — PCI + TAC both matched (registered device confirmed)
+     *  PCI_ONLY  — PCI matched, TAC unavailable, single unambiguous carrier in tile
+     *  AMBIGUOUS — PCI matched but multiple carriers share it in the loaded tiles
+     *  NONE      — no record for this PCI in any loaded tile
+     */
+    fun lookupMatchLevel(pci: Int, tac: Int): DbMatchLevel {
+        if (lookup[packKey(pci, tac)] != null || tacLookup[tac] != null) return DbMatchLevel.EXACT
+        val carriers = pciCarrierSets[pci] ?: return DbMatchLevel.NONE
+        return if (carriers.size == 1) DbMatchLevel.PCI_ONLY else DbMatchLevel.AMBIGUOUS
+    }
+
     // ── private ──────────────────────────────────────────────────────────────
 
     private fun rebuildLookup() {
         lookup.clear()
         tacLookup.clear()
+        pciCarrierSets.clear()
+        pciCells.clear()
         for (cachedTile in tileCache.values) {
             mergeCells(cachedTile.cells)
         }
@@ -170,6 +215,14 @@ object CellfireDbManager {
                 val existingTac = tacLookup[cell.tac]
                 if (existingTac == null || cell.samples > existingTac.samples) {
                     tacLookup[cell.tac] = cell
+                }
+            }
+            // Track per-PCI carrier sets for ambiguity detection
+            if (cell.pci > 0 && cell.carrier.isNotBlank() && cell.carrier != "Unknown") {
+                pciCarrierSets.getOrPut(cell.pci) { mutableSetOf() }.add(cell.carrier)
+                val best = pciCells[cell.pci]
+                if (best == null || cell.samples > best.samples) {
+                    pciCells[cell.pci] = cell
                 }
             }
         }
