@@ -183,6 +183,9 @@ def backfill_conf(records: list) -> list:
 # them as "anchors" to guess the carrier of unresolved cells in the same tile.
 #
 # Signals used (cumulative vote tally per carrier):
+#   +40  Exact EARFCN match + same band  — same channel = same operator frequency
+#   +15  EARFCN delta ≤ 100 + same band  — adjacent carrier (~10 MHz), same band
+#   + 5  Band overlap only (no EARFCN)   — weak hint when EARFCN not yet known
 #   +35  Same TAC   — TAC is carrier-assigned, not site-assigned; very strong
 #   +20  PCI delta ≤ 3   — typical same-site 3-sector cluster (N, N+1, N+2)
 #   +12  PCI delta ≤ 10  — common local market planning group
@@ -190,7 +193,6 @@ def backfill_conf(records: list) -> list:
 #   + 8  mod-3 mismatch  — orthogonal sectors: cand_pci%3 ≠ anchor_pci%3
 #   - 5  mod-3 match + delta ≤ 3  — CRS collision risk; suspicious in real nets
 #   +10  geo < 1 km / +6 < 3 km / +3 < 10 km
-#   + 5  band overlap (possible_bands intersection)
 #
 # Result: inferred conf capped at 74 → always MED_CONF (yellow dot), never
 # HIGH_CONF, so the user sees it as "probably right, not confirmed."
@@ -213,7 +215,16 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 def _score_candidate_vs_anchor(cand: dict, anchor: dict) -> int:
     """
     Raw vote score for how likely cand belongs to the same carrier as anchor.
-    Returns 0–100+ (unnormalized); 0 means "no signal".
+    Returns 0–120+ (unnormalized); 0 means "no signal".
+
+    Signal priority (strongest first):
+      EARFCN exact match + same band → +40  (same channel = same operator freq)
+      EARFCN near match  + same band → +15  (adjacent carrier, ~10 MHz)
+      Band overlap only              → + 5  (fallback when EARFCN not yet stored)
+      Same TAC                       → +35  (TAC is carrier-assigned)
+      PCI delta ≤ 3/10/30            → +20/12/5
+      mod-3 sector orthogonality     → +8 / -5
+      Geographic proximity           → +10/6/3
     """
     cand_pci = cand.get("pci", 0)
     anc_pci  = anchor.get("pci", 0)
@@ -222,31 +233,51 @@ def _score_candidate_vs_anchor(cand: dict, anchor: dict) -> int:
 
     score = 0
 
-    # 1. Same TAC — strongest non-RF signal
+    # 1. EARFCN / frequency match — strongest RF signal
+    #    Carriers reuse the exact same EARFCN across thousands of towers on the
+    #    same band (operational simplicity, SON automation, device testing).
+    #    Exact EARFCN match on same band is nearly as good as a TAC match.
+    cand_earfcn = cand.get("arfcn", 0)
+    anc_earfcn  = anchor.get("arfcn", 0)
+    cand_bands  = set(cand.get("possible_bands", []))
+    anc_bands   = set(anchor.get("possible_bands", []))
+    shared_band = bool(cand_bands and anc_bands and cand_bands & anc_bands)
+
+    if cand_earfcn and anc_earfcn:
+        earfcn_delta = abs(cand_earfcn - anc_earfcn)
+        if earfcn_delta == 0 and shared_band:
+            score += 40   # exact frequency match on same band
+        elif earfcn_delta <= 100 and shared_band:
+            score += 15   # adjacent channel (~10 MHz) — capacity layer or dual carrier
+        # different EARFCN but same band: no boost (different operator or segment)
+    elif shared_band:
+        score += 5        # band overlap only — weak hint, EARFCN not yet stored
+
+    # 2. Same TAC — strongest non-RF signal (TAC is carrier-assigned per market)
     cand_tac = cand.get("tac")
     anc_tac  = anchor.get("tac")
     if cand_tac and anc_tac and cand_tac == anc_tac:
         score += 35
 
-    # 2. PCI delta
+    # 3. PCI delta — local cluster planning
     delta = abs(cand_pci - anc_pci)
     if delta <= 3:
-        score += 20
+        score += 20   # same-site 3-sector cluster (N, N+1, N+2 pattern)
     elif delta <= 10:
-        score += 12
+        score += 12   # local market planning group
     elif delta <= 30:
-        score += 5
+        score += 5    # weak regional hint
 
-    # 3. mod-3 sector compatibility
-    #    3-sector sites typically assign PCIs with distinct mod-3 values (0,1,2).
-    #    Different mod-3 → orthogonal sectors → good sign they co-exist.
-    #    Same mod-3 AND very close delta → potential CRS collision, suspicious.
+    # 4. mod-3 sector compatibility
+    #    3-sector sites assign PCIs with distinct mod-3 values (0, 1, 2).
+    #    Different mod-3 → orthogonal sectors → typical co-site pattern.
+    #    Same mod-3 AND very close delta → CRS collision risk → suspicious.
     if cand_pci % 3 != anc_pci % 3:
         score += 8
     elif delta <= 3:
-        score -= 5  # same mod-3, too close — unlikely in real RF planning
+        score -= 5   # same mod-3 + too close → unlikely in real RF planning
 
-    # 4. Geographic proximity
+    # 5. Geographic proximity
     try:
         dist_km = _haversine_km(
             cand.get("lat", 0.0), cand.get("lon", 0.0),
@@ -258,14 +289,9 @@ def _score_candidate_vs_anchor(cand: dict, anchor: dict) -> int:
             score += 6
         elif dist_km < 10.0:
             score += 3
+        # > 10 km: no geo boost; cross-tile inference not attempted
     except Exception:
         pass
-
-    # 5. Band overlap
-    cand_bands = set(cand.get("possible_bands", []))
-    anc_bands  = set(anchor.get("possible_bands", []))
-    if cand_bands and anc_bands and cand_bands & anc_bands:
-        score += 5
 
     return max(0, score)
 
@@ -418,6 +444,12 @@ def merge_observation(records: list, obs: dict) -> list:
                 if obs.get("mnc"):
                     rec["mnc"] = obs["mnc"]
 
+            # Store EARFCN — keep the highest-confidence value seen
+            # (arfcn=0 is unknown; crowd obs always send real EARFCN so overwrite 0)
+            obs_arfcn = obs.get("arfcn", 0)
+            if obs_arfcn and (not rec.get("arfcn") or obs_base >= stored_base):
+                rec["arfcn"] = obs_arfcn
+
             # Update location as running average weighted by samples
             n = rec["samples"]
             rec["lat"] = ((rec.get("lat", obs["lat"]) * (n - 1)) + obs["lat"]) / n
@@ -442,6 +474,7 @@ def merge_observation(records: list, obs: dict) -> list:
         "range":          0,
         "samples":        1,
         "source":         obs_source,
+        "arfcn":          obs.get("arfcn", 0),
         "possible_bands": [_band_to_int(obs["band"])] if obs.get("band") else [],
         "conf":           compute_conf(obs_source, 1),
     }
