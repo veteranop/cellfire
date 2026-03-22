@@ -228,62 +228,74 @@ def _score_candidate_vs_anchor(cand: dict, anchor: dict) -> int:
       EARFCN near match  + same band → +15  (adjacent carrier, ~10 MHz)
       Band overlap only              → + 5  (fallback when EARFCN not yet stored)
       Same TAC                       → +35  (TAC is carrier-assigned)
-      PCI delta ≤ 3/10/30            → +20/12/5
-      mod-3 sector orthogonality     → +8 / -5
+      PCI delta ≤ 3/10/30 (same band)→ +20/12/5  (zeroed across band boundaries)
+      mod-3 sector ortho  (same band)→ +8 / -5
       Geographic proximity           → +10/6/3
+
+    Hard rules:
+      Different band + different EARFCN → return 0 immediately.
+        PCI proximity is meaningless across carrier frequency blocks.
+        Real-world: VZW PCI 308 B2 ARFCN 1100 and T-Mobile PCI 309 B12
+        ARFCN 5035 are on the same tower ~60 m apart — adjacent PCIs,
+        different mod-3, but completely different operators.
+      Different band (known) → PCI delta and mod-3 contributions zeroed.
     """
     cand_pci = cand.get("pci", 0)
     anc_pci  = anchor.get("pci", 0)
     if cand_pci <= 0 or anc_pci <= 0 or cand_pci == anc_pci:
         return 0
 
-    score = 0
-
-    # 1. EARFCN / frequency match — strongest RF signal
-    #    Carriers reuse the exact same EARFCN across thousands of towers on the
-    #    same band (operational simplicity, SON automation, device testing).
-    #    Exact EARFCN match on same band is nearly as good as a TAC match.
+    # ── Band / EARFCN pre-check ───────────────────────────────────────────────
     cand_earfcn = cand.get("arfcn", 0)
     anc_earfcn  = anchor.get("arfcn", 0)
     cand_bands  = set(cand.get("possible_bands", []))
     anc_bands   = set(anchor.get("possible_bands", []))
-    shared_band = bool(cand_bands and anc_bands and cand_bands & anc_bands)
+    shared_band          = bool(cand_bands and anc_bands and cand_bands & anc_bands)
+    confirmed_diff_band  = bool(cand_bands and anc_bands and not cand_bands & anc_bands)
 
+    # Hard block: both EARFCNs known + confirmed different band → stop here.
+    # Carriers on different bands are guaranteed different operators on this tower.
+    if cand_earfcn and anc_earfcn and confirmed_diff_band:
+        if abs(cand_earfcn - anc_earfcn) > 50:
+            return 0
+
+    score = 0
+
+    # 1. EARFCN / frequency match
     if cand_earfcn and anc_earfcn:
         earfcn_delta = abs(cand_earfcn - anc_earfcn)
         if earfcn_delta == 0 and shared_band:
             score += 40   # exact frequency match on same band
         elif earfcn_delta <= 100 and shared_band:
-            score += 15   # adjacent channel (~10 MHz) — capacity layer or dual carrier
-        # different EARFCN but same band: no boost (different operator or segment)
+            score += 15   # adjacent channel — capacity layer or dual carrier
     elif shared_band:
-        score += 5        # band overlap only — weak hint, EARFCN not yet stored
+        score += 5        # band overlap only — EARFCN not yet stored
 
-    # 2. Same TAC — strongest non-RF signal (TAC is carrier-assigned per market)
+    # 2. Same TAC — strongest non-RF signal
     cand_tac = cand.get("tac")
     anc_tac  = anchor.get("tac")
     if cand_tac and anc_tac and cand_tac == anc_tac:
         score += 35
 
-    # 3. PCI delta — local cluster planning
-    delta = abs(cand_pci - anc_pci)
-    if delta <= 3:
-        score += 20   # same-site 3-sector cluster (N, N+1, N+2 pattern)
-    elif delta <= 10:
-        score += 12   # local market planning group
-    elif delta <= 30:
-        score += 5    # weak regional hint
+    # 3. PCI delta — only meaningful within the same band.
+    #    Cross-band PCI proximity is noise: consecutive PCIs can belong to
+    #    completely different carriers on different frequency blocks.
+    if not confirmed_diff_band:
+        delta = abs(cand_pci - anc_pci)
+        if delta <= 3:
+            score += 20   # same-site 3-sector cluster (N, N+1, N+2)
+        elif delta <= 10:
+            score += 12   # local market planning group
+        elif delta <= 30:
+            score += 5    # weak regional hint
 
-    # 4. mod-3 sector compatibility
-    #    3-sector sites assign PCIs with distinct mod-3 values (0, 1, 2).
-    #    Different mod-3 → orthogonal sectors → typical co-site pattern.
-    #    Same mod-3 AND very close delta → CRS collision risk → suspicious.
-    if cand_pci % 3 != anc_pci % 3:
-        score += 8
-    elif delta <= 3:
-        score -= 5   # same mod-3 + too close → unlikely in real RF planning
+        # 4. mod-3 sector compatibility (also band-gated)
+        if cand_pci % 3 != anc_pci % 3:
+            score += 8    # orthogonal sectors — typical co-site pattern
+        elif delta <= 3:
+            score -= 5    # same mod-3 + too close → CRS collision risk
 
-    # 5. Geographic proximity
+    # 5. Geographic proximity (always applies — useful for geo-clustering)
     try:
         dist_km = _haversine_km(
             cand.get("lat", 0.0), cand.get("lon", 0.0),
@@ -295,7 +307,6 @@ def _score_candidate_vs_anchor(cand: dict, anchor: dict) -> int:
             score += 6
         elif dist_km < 10.0:
             score += 3
-        # > 10 km: no geo boost; cross-tile inference not attempted
     except Exception:
         pass
 
@@ -339,12 +350,21 @@ def infer_neighbor_carriers(records: list) -> list:
     # boundaries (full LTE PCI space is 0–503; a carrier typically uses
     # a much smaller slice per market).
 
+    # Build per-carrier PCI sets AND min/max ranges from anchors.
+    # PCI planning is NOT coordinated between carriers — adjacent PCIs can
+    # belong to completely different operators (e.g. VZW PCI 308 ARFCN 1100
+    # next to T-Mobile PCI 309 ARFCN 5035). So before applying a range boost
+    # we MUST verify the range is uncontested: no other carrier has a confirmed
+    # cell inside it. A contested range gets no boost at all.
+
+    carrier_pci_sets:  dict = {}   # {carrier: set of confirmed PCIs}
     carrier_pci_range: dict = {}   # {carrier: {"min", "max", "count"}}
     for a in anchors:
         c = a.get("carrier", "Unknown")
         p = a.get("pci", 0)
         if not p:
             continue
+        carrier_pci_sets.setdefault(c, set()).add(p)
         if c not in carrier_pci_range:
             carrier_pci_range[c] = {"min": p, "max": p, "count": 1}
         else:
@@ -353,16 +373,28 @@ def infer_neighbor_carriers(records: list) -> list:
             entry["max"]    = max(entry["max"], p)
             entry["count"] += 1
 
+    def _range_is_clean(carrier: str, lo: int, hi: int) -> bool:
+        """True if no rival carrier has a confirmed anchor PCI inside [lo, hi]."""
+        for other, pcis in carrier_pci_sets.items():
+            if other == carrier:
+                continue
+            if any(lo <= p <= hi for p in pcis):
+                return False   # contested — another carrier confirmed in here
+        return True
+
     def _pci_range_boost(pci: int, carrier: str) -> int:
         entry = carrier_pci_range.get(carrier)
         if not entry or entry["count"] < 2:
             return 0   # need at least 2 anchors to establish a range
-        span = entry["max"] - entry["min"]
+        lo, hi = entry["min"], entry["max"]
+        span = hi - lo
         if span == 0 or span > 150:
-            return 0   # all on same PCI (no range), or suspiciously wide
-        if not (entry["min"] <= pci <= entry["max"]):
-            return 0   # outside range
-        # Inside confirmed range — score by anchor density
+            return 0   # all same PCI (no range) or suspiciously wide
+        if not (lo <= pci <= hi):
+            return 0   # outside this carrier's range
+        if not _range_is_clean(carrier, lo, hi):
+            return 0   # another carrier confirmed inside this range — unsafe
+        # Uncontested range — score by anchor density
         count = entry["count"]
         if count >= 10:
             return 40
@@ -376,6 +408,14 @@ def infer_neighbor_carriers(records: list) -> list:
     # when many anchors are clustered in the tile. Having 10 VZW towers within
     # 3 km would otherwise give every cell in the tile +60 pts from geo alone.
     # The range boost is then added as a flat signal on top of the best match.
+    #
+    # Multi-carrier threshold: if 2+ carriers are confirmed in this tile, PCI
+    # proximity alone (~30–40 pts) cannot distinguish operators — adjacent PCIs
+    # can belong to completely different carriers on different frequencies.
+    # Require TAC or EARFCN evidence (combined score ≥ 60) before assigning.
+    confirmed_carriers = {a["carrier"] for a in anchors}
+    effective_threshold = 60 if len(confirmed_carriers) > 1 else NEIGHBOR_APPLY_THRESHOLD
+
     updated = 0
     for cand in candidates:
         cand_pci = cand.get("pci", 0)
@@ -402,7 +442,7 @@ def infer_neighbor_carriers(records: list) -> list:
         best_carrier = max(carrier_scores, key=carrier_scores.__getitem__)
         best_score   = carrier_scores[best_carrier]
 
-        if best_score < NEIGHBOR_APPLY_THRESHOLD:
+        if best_score < effective_threshold:
             continue
 
         # Convert raw vote score to conf: floor 30, slope 0.5, cap 84
