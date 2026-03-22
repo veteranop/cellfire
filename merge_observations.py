@@ -88,11 +88,12 @@ log = logging.getLogger("cellfire_merge")
 
 # Base score per source tag (from CrowdsourceReporter / CellScanService)
 SOURCE_BASE_SCORE = {
-    "alpha":     100,   # operatorAlphaLong — registered modem confirmation
-    "plmn":      100,   # MCC+MNC table match on registered cell
-    "fcc_band":   90,   # exclusive band (B13/B14/B71) — no ambiguity possible
-    "db":         70,   # confirmed by a prior crowd observation, source lost
-    "pci_range":  20,   # hardcoded PCI bucket — educated guess only
+    "alpha":           100,  # operatorAlphaLong — registered modem confirmation
+    "plmn":            100,  # MCC+MNC table match on registered cell
+    "fcc_band":         90,  # exclusive band (B13/B14/B71) — no ambiguity possible
+    "db":               70,  # confirmed by a prior crowd observation, source lost
+    "neighbor_infer":   55,  # inferred from nearby confirmed cells (PCI/TAC/geo proximity)
+    "pci_range":        20,  # hardcoded PCI bucket — educated guess only
 }
 SOURCE_BASE_DEFAULT = 40  # OCID-seeded records with no source field
 
@@ -172,6 +173,160 @@ def backfill_conf(records: list) -> list:
             if rec.get("pci", 0) in collision_pcis:
                 base -= 10
             rec["conf"] = max(0, min(100, base))
+
+    return records
+
+
+# ── Neighbor-inference scoring ───────────────────────────────────────────────
+#
+# When a tile contains confirmed cells (alpha/plmn/fcc_band, conf ≥ 70) we use
+# them as "anchors" to guess the carrier of unresolved cells in the same tile.
+#
+# Signals used (cumulative vote tally per carrier):
+#   +35  Same TAC   — TAC is carrier-assigned, not site-assigned; very strong
+#   +20  PCI delta ≤ 3   — typical same-site 3-sector cluster (N, N+1, N+2)
+#   +12  PCI delta ≤ 10  — common local market planning group
+#   + 5  PCI delta ≤ 30  — weak regional hint
+#   + 8  mod-3 mismatch  — orthogonal sectors: cand_pci%3 ≠ anchor_pci%3
+#   - 5  mod-3 match + delta ≤ 3  — CRS collision risk; suspicious in real nets
+#   +10  geo < 1 km / +6 < 3 km / +3 < 10 km
+#   + 5  band overlap (possible_bands intersection)
+#
+# Result: inferred conf capped at 74 → always MED_CONF (yellow dot), never
+# HIGH_CONF, so the user sees it as "probably right, not confirmed."
+
+NEIGHBOR_MIN_ANCHOR_CONF  = 70   # Only trust anchors at this confidence or above
+NEIGHBOR_APPLY_THRESHOLD  = 30   # Minimum raw vote score to assign a carrier
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Approximate great-circle distance in km."""
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
+         * math.sin(dlon / 2) ** 2)
+    return R * 2 * math.asin(math.sqrt(min(1.0, a)))
+
+
+def _score_candidate_vs_anchor(cand: dict, anchor: dict) -> int:
+    """
+    Raw vote score for how likely cand belongs to the same carrier as anchor.
+    Returns 0–100+ (unnormalized); 0 means "no signal".
+    """
+    cand_pci = cand.get("pci", 0)
+    anc_pci  = anchor.get("pci", 0)
+    if cand_pci <= 0 or anc_pci <= 0 or cand_pci == anc_pci:
+        return 0
+
+    score = 0
+
+    # 1. Same TAC — strongest non-RF signal
+    cand_tac = cand.get("tac")
+    anc_tac  = anchor.get("tac")
+    if cand_tac and anc_tac and cand_tac == anc_tac:
+        score += 35
+
+    # 2. PCI delta
+    delta = abs(cand_pci - anc_pci)
+    if delta <= 3:
+        score += 20
+    elif delta <= 10:
+        score += 12
+    elif delta <= 30:
+        score += 5
+
+    # 3. mod-3 sector compatibility
+    #    3-sector sites typically assign PCIs with distinct mod-3 values (0,1,2).
+    #    Different mod-3 → orthogonal sectors → good sign they co-exist.
+    #    Same mod-3 AND very close delta → potential CRS collision, suspicious.
+    if cand_pci % 3 != anc_pci % 3:
+        score += 8
+    elif delta <= 3:
+        score -= 5  # same mod-3, too close — unlikely in real RF planning
+
+    # 4. Geographic proximity
+    try:
+        dist_km = _haversine_km(
+            cand.get("lat", 0.0), cand.get("lon", 0.0),
+            anchor.get("lat", 0.0), anchor.get("lon", 0.0),
+        )
+        if dist_km < 1.0:
+            score += 10
+        elif dist_km < 3.0:
+            score += 6
+        elif dist_km < 10.0:
+            score += 3
+    except Exception:
+        pass
+
+    # 5. Band overlap
+    cand_bands = set(cand.get("possible_bands", []))
+    anc_bands  = set(anchor.get("possible_bands", []))
+    if cand_bands and anc_bands and cand_bands & anc_bands:
+        score += 5
+
+    return max(0, score)
+
+
+def infer_neighbor_carriers(records: list) -> list:
+    """
+    For unresolved / low-confidence records in a tile, vote on carrier using
+    nearby confirmed cells (anchors). Updates carrier, source, and conf
+    in-place when a carrier wins with enough votes.
+
+    Inferred conf is capped at 74 so these cells always land in MED_CONF
+    (yellow dot) — never mistaken for a crowd-confirmed record.
+    """
+    anchors = [
+        r for r in records
+        if r.get("conf", 0) >= NEIGHBOR_MIN_ANCHOR_CONF
+        and r.get("carrier", "Unknown") not in ("Unknown", "")
+    ]
+    if not anchors:
+        return records
+
+    candidates = [
+        r for r in records
+        if r.get("carrier", "Unknown") in ("Unknown", "")
+        or r.get("conf", 0) < NEIGHBOR_MIN_ANCHOR_CONF
+    ]
+
+    updated = 0
+    for cand in candidates:
+        carrier_scores: dict = defaultdict(int)
+
+        for anchor in anchors:
+            s = _score_candidate_vs_anchor(cand, anchor)
+            if s > 0:
+                carrier_scores[anchor["carrier"]] += s
+
+        if not carrier_scores:
+            continue
+
+        best_carrier = max(carrier_scores, key=carrier_scores.__getitem__)
+        best_score   = carrier_scores[best_carrier]
+
+        if best_score < NEIGHBOR_APPLY_THRESHOLD:
+            continue
+
+        # Convert raw vote score to conf: floor 30, slope 0.5, cap 74
+        # (74 = just below HIGH_CONF threshold of 75)
+        inferred_conf = min(74, 30 + int(best_score * 0.5))
+        current_conf  = cand.get("conf", 0)
+
+        if inferred_conf > current_conf:
+            old = f"carrier={cand.get('carrier','?')} conf={current_conf}"
+            cand["carrier"] = best_carrier
+            cand["source"]  = "neighbor_infer"
+            cand["conf"]    = inferred_conf
+            log.info(f"  neighbor_infer pci={cand.get('pci')} tac={cand.get('tac')} "
+                     f"{old} → {best_carrier} conf={inferred_conf} (votes={best_score})")
+            updated += 1
+
+    if updated:
+        log.info(f"  neighbor_infer: resolved {updated} records from {len(anchors)} anchors")
 
     return records
 
@@ -373,11 +528,14 @@ def main():
             records = merge_observation(records, obs)
             processed_keys.append((tile_key, node_key))
 
+        # Infer carrier for unresolved cells using confirmed neighbors in tile
+        records = infer_neighbor_carriers(records)
+
         save_tile(filepath, records)
-        if not LOCAL_MODE:
+        if LOCAL_MODE:
+            # Running locally — push the merged tile to the server via cPanel
             upload_tile(filepath)
-        else:
-            log.info(f"LOCAL_MODE: skipping upload for {filepath.name} — set LOCAL_MODE=False to push to server")
+        # When LOCAL_MODE=False: already written directly to the server filesystem, no upload needed
 
     # Delete processed entries from Firebase — keeps the DB clean, no accumulation
     for tile_key, node_key in processed_keys:
