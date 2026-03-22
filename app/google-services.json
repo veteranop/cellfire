@@ -2,6 +2,7 @@
   "project_info": {
     "project_number": "748254142306",
     "project_id": "veteranopcom",
+    "firebase_url": "https://veteranopcom-default-rtdb.firebaseio.com",
     "storage_bucket": "veteranopcom.firebasestorage.app"
   },
   "client": [
