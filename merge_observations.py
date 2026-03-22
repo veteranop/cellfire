@@ -184,15 +184,21 @@ def backfill_conf(records: list) -> list:
 #
 # Signals used (cumulative vote tally per carrier):
 #   +40  Exact EARFCN match + same band  — same channel = same operator frequency
-#   +15  EARFCN delta ≤ 100 + same band  — adjacent carrier (~10 MHz), same band
-#   + 5  Band overlap only (no EARFCN)   — weak hint when EARFCN not yet known
+#   +40  PCI within carrier's confirmed range (10+ anchors)  — dense block
 #   +35  Same TAC   — TAC is carrier-assigned, not site-assigned; very strong
+#   +30  PCI within carrier's confirmed range (4–9 anchors)
+#   +20  PCI within carrier's confirmed range (2–3 anchors)  — tentative
 #   +20  PCI delta ≤ 3   — typical same-site 3-sector cluster (N, N+1, N+2)
+#   +15  EARFCN delta ≤ 100 + same band  — adjacent carrier (~10 MHz), same band
 #   +12  PCI delta ≤ 10  — common local market planning group
-#   + 5  PCI delta ≤ 30  — weak regional hint
 #   + 8  mod-3 mismatch  — orthogonal sectors: cand_pci%3 ≠ anchor_pci%3
+#   + 5  PCI delta ≤ 30  — weak regional hint
+#   + 5  Band overlap only (no EARFCN)   — weak hint when EARFCN not yet known
 #   - 5  mod-3 match + delta ≤ 3  — CRS collision risk; suspicious in real nets
 #   +10  geo < 1 km / +6 < 3 km / +3 < 10 km
+#
+# Conf cap raised to 84 (HIGH_CONF) when full-signal hits align
+# (TAC + EARFCN + PCI range + geo). Range-only → max ~50 (MED_CONF).
 #
 # Result: inferred conf capped at 74 → always MED_CONF (yellow dot), never
 # HIGH_CONF, so the user sees it as "probably right, not confirmed."
@@ -319,14 +325,76 @@ def infer_neighbor_carriers(records: list) -> list:
         or r.get("conf", 0) < NEIGHBOR_MIN_ANCHOR_CONF
     ]
 
+    # ── Pass 1: build per-carrier PCI ranges from confirmed anchors ───────────
+    # Carriers plan PCIs in contiguous blocks within a market area.
+    # If carrier X is confirmed on PCI 28 and PCI 45 in this tile, an unknown
+    # cell on PCI 37 is almost certainly that carrier's spectrum.
+    #
+    # Range boost scales with how many anchors establish the range:
+    #   2–3 anchors  → +20  (tentative range — could be coincidence)
+    #   4–9 anchors  → +30  (solid range)
+    #   10+ anchors  → +40  (well-established block)
+    #
+    # Capped at PCI span ≤ 150 to avoid false positives across operator
+    # boundaries (full LTE PCI space is 0–503; a carrier typically uses
+    # a much smaller slice per market).
+
+    carrier_pci_range: dict = {}   # {carrier: {"min", "max", "count"}}
+    for a in anchors:
+        c = a.get("carrier", "Unknown")
+        p = a.get("pci", 0)
+        if not p:
+            continue
+        if c not in carrier_pci_range:
+            carrier_pci_range[c] = {"min": p, "max": p, "count": 1}
+        else:
+            entry = carrier_pci_range[c]
+            entry["min"]    = min(entry["min"], p)
+            entry["max"]    = max(entry["max"], p)
+            entry["count"] += 1
+
+    def _pci_range_boost(pci: int, carrier: str) -> int:
+        entry = carrier_pci_range.get(carrier)
+        if not entry or entry["count"] < 2:
+            return 0   # need at least 2 anchors to establish a range
+        span = entry["max"] - entry["min"]
+        if span == 0 or span > 150:
+            return 0   # all on same PCI (no range), or suspiciously wide
+        if not (entry["min"] <= pci <= entry["max"]):
+            return 0   # outside range
+        # Inside confirmed range — score by anchor density
+        count = entry["count"]
+        if count >= 10:
+            return 40
+        elif count >= 4:
+            return 30
+        else:
+            return 20
+
+    # ── Pass 2: per-anchor vote scoring ──────────────────────────────────────
+    # Use MAX score against any single anchor (not sum) to avoid vote inflation
+    # when many anchors are clustered in the tile. Having 10 VZW towers within
+    # 3 km would otherwise give every cell in the tile +60 pts from geo alone.
+    # The range boost is then added as a flat signal on top of the best match.
     updated = 0
     for cand in candidates:
-        carrier_scores: dict = defaultdict(int)
+        cand_pci = cand.get("pci", 0)
+        carrier_best: dict = {}   # {carrier: best single-anchor score}
 
         for anchor in anchors:
             s = _score_candidate_vs_anchor(cand, anchor)
             if s > 0:
-                carrier_scores[anchor["carrier"]] += s
+                c = anchor["carrier"]
+                if s > carrier_best.get(c, 0):
+                    carrier_best[c] = s
+
+        # Add PCI range bonus (flat, independent of anchor count beyond minimum)
+        all_carriers = set(list(carrier_best.keys()) + list(carrier_pci_range.keys()))
+        carrier_scores: dict = {}
+        for carrier in all_carriers:
+            score = carrier_best.get(carrier, 0) + _pci_range_boost(cand_pci, carrier)
+            if score > 0:
+                carrier_scores[carrier] = score
 
         if not carrier_scores:
             continue
@@ -337,9 +405,10 @@ def infer_neighbor_carriers(records: list) -> list:
         if best_score < NEIGHBOR_APPLY_THRESHOLD:
             continue
 
-        # Convert raw vote score to conf: floor 30, slope 0.5, cap 74
-        # (74 = just below HIGH_CONF threshold of 75)
-        inferred_conf = min(74, 30 + int(best_score * 0.5))
+        # Convert raw vote score to conf: floor 30, slope 0.5, cap 84
+        # Range-only hits (no TAC/EARFCN/geo) max out around 40 votes → conf 50
+        # Full-signal hits (TAC + EARFCN + range + geo) → conf 84 → HIGH_CONF
+        inferred_conf = min(84, 30 + int(best_score * 0.5))
         current_conf  = cand.get("conf", 0)
 
         if inferred_conf > current_conf:
@@ -347,8 +416,13 @@ def infer_neighbor_carriers(records: list) -> list:
             cand["carrier"] = best_carrier
             cand["source"]  = "neighbor_infer"
             cand["conf"]    = inferred_conf
-            log.info(f"  neighbor_infer pci={cand.get('pci')} tac={cand.get('tac')} "
-                     f"{old} → {best_carrier} conf={inferred_conf} (votes={best_score})")
+            range_tag = ""
+            if _pci_range_boost(cand_pci, best_carrier):
+                r = carrier_pci_range[best_carrier]
+                range_tag = f" [in PCI range {r['min']}–{r['max']}]"
+            log.info(f"  neighbor_infer pci={cand_pci} tac={cand.get('tac')} "
+                     f"{old} → {best_carrier} conf={inferred_conf} "
+                     f"(votes={best_score}){range_tag}")
             updated += 1
 
     if updated:
