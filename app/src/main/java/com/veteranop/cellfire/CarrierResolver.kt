@@ -61,9 +61,14 @@ object CarrierResolver {
 
     fun initialize(context: Context) {
         try {
-            val jsonString = context.assets.open("band_carrier_lookup.json")
+            val raw = context.assets.open("band_carrier_lookup.json")
                 .bufferedReader().use { it.readText() }
-            bandLookup = Json.decodeFromString(jsonString)
+            // Strip // line comments — the JSON file uses them for readability
+            // but Kotlinx Serialization rejects non-standard JSON.
+            val clean = raw.lines()
+                .map { line -> line.substringBefore("//").trimEnd() }
+                .joinToString("\n")
+            bandLookup = Json.decodeFromString(clean)
         } catch (e: Exception) {
             e.printStackTrace()
         }
