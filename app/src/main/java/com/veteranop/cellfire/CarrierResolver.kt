@@ -3,6 +3,8 @@ package com.veteranop.cellfire
 import android.content.Context
 import android.util.Log
 import android.util.LruCache
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.Serializable
 import org.osmdroid.util.GeoPoint
@@ -11,6 +13,8 @@ import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.Field
 import retrofit2.http.FormUrlEncoded
 import retrofit2.http.POST
+import java.io.File
+import java.net.URL
 
 interface UnwiredLabsApi {
     @FormUrlEncoded
@@ -35,6 +39,8 @@ data class UnwiredResponse(
 
 @Serializable
 data class BandCarrierLookup(
+    val version: String = "bundled",
+    val display_names: Map<String, String> = emptyMap(),
     val lte_band_to_carrier: Map<String, List<String>>,
     val nr_band_to_carrier: Map<String, List<String>>,
     val earfcn_ranges: Map<String, CarrierLookupBandInfo>,
@@ -50,8 +56,16 @@ data class CarrierLookupBandInfo(
 
 object CarrierResolver {
 
+    private const val TAG = "CarrierResolver"
+    private const val RULES_URL =
+        "https://cellfire.io/files/cellfire-db/band_carrier_lookup.json"
+    private const val CACHE_TTL_MS = 24 * 60 * 60 * 1000L  // 24 hours
+    private const val CACHED_FILENAME = "band_carrier_lookup_cached.json"
+
+    private val json = Json { ignoreUnknownKeys = true }
     private val cache = LruCache<String, Pair<String, GeoPoint?>>(500)
     private var bandLookup: BandCarrierLookup? = null
+    private var appContext: Context? = null
 
     private val api = Retrofit.Builder()
         .baseUrl("https://us1.unwiredlabs.com/")
@@ -59,18 +73,111 @@ object CarrierResolver {
         .build()
         .create(UnwiredLabsApi::class.java)
 
+    /** Returns the version string of the currently loaded rules (e.g. "m26-1"). */
+    fun currentVersion(): String = bandLookup?.version ?: "bundled"
+
+    /**
+     * If [bandLabel] (e.g. "n71", "B13") maps to an exclusively-licensed carrier in the
+     * loaded rules, returns that carrier name. Returns null for shared bands.
+     *
+     * Used as a lightweight fallback when FCC geographic data and DB lookup both miss —
+     * exclusive bands are spectrum-license-unique and need no geographic confirmation.
+     */
+    /**
+     * Maps an internal carrier name to its server-configured display name.
+     * Falls back to the original name if no mapping is defined.
+     * e.g. "Dish Wireless" → "Dish (Boost)", "FirstNet/AT&T" → "FirstNet"
+     */
+    fun displayName(carrier: String): String =
+        bandLookup?.display_names?.get(carrier) ?: carrier
+
+    fun resolveExclusiveCarrier(bandLabel: String): String? {
+        val lookup = bandLookup ?: return null
+        val bandNum = bandLabel.removePrefix("B").removePrefix("n").toIntOrNull() ?: return null
+        return lookup.carrier_exclusive_bands[bandNum.toString()]
+    }
+
     fun initialize(context: Context) {
+        appContext = context.applicationContext
+        // 1. Try cached file first (if fresh enough), else fall back to bundled asset.
+        val cached = cachedFile(context)
+        val loaded = when {
+            cached != null -> parseLookup(cached.readText())
+            else           -> loadBundled(context)
+        }
+        if (loaded != null) bandLookup = loaded
+
+        // 2. Schedule background refresh if cache is stale / missing.
+        if (cached == null || isCacheStale(context)) {
+            Thread { refreshFromServer(context) }.start()
+        }
+    }
+
+    /**
+     * Fetches the latest rules from the server, updates the cached file,
+     * and reloads [bandLookup]. Called from a background thread.
+     * Returns the new version string on success, null on failure.
+     */
+    suspend fun fetchUpdate(): String? = withContext(Dispatchers.IO) {
+        val ctx = appContext ?: return@withContext null
+        refreshFromServer(ctx)
+        bandLookup?.version
+    }
+
+    // ── Private helpers ──────────────────────────────────────────────────────
+
+    private fun refreshFromServer(context: Context) {
         try {
+            val conn = URL(RULES_URL).openConnection()
+            conn.setRequestProperty("User-Agent", "CellfireApp/1.0")
+            conn.setRequestProperty("Accept", "*/*")
+            val text = conn.getInputStream().bufferedReader().use { it.readText() }
+            val parsed = parseLookup(text) ?: return
+            // Write to cache
+            val file = File(context.filesDir, CACHED_FILENAME)
+            file.writeText(text)
+            // Update timestamp pref
+            context.getSharedPreferences("cellfire_rules", Context.MODE_PRIVATE)
+                .edit().putLong("rules_fetched_at", System.currentTimeMillis()).apply()
+            bandLookup = parsed
+            Log.i(TAG, "Rules updated to ${parsed.version}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Rules fetch failed: ${e.message}")
+        }
+    }
+
+    private fun cachedFile(context: Context): File? {
+        val file = File(context.filesDir, CACHED_FILENAME)
+        return if (file.exists() && file.length() > 0) file else null
+    }
+
+    private fun isCacheStale(context: Context): Boolean {
+        val fetchedAt = context.getSharedPreferences("cellfire_rules", Context.MODE_PRIVATE)
+            .getLong("rules_fetched_at", 0L)
+        return System.currentTimeMillis() - fetchedAt > CACHE_TTL_MS
+    }
+
+    private fun loadBundled(context: Context): BandCarrierLookup? {
+        return try {
             val raw = context.assets.open("band_carrier_lookup.json")
                 .bufferedReader().use { it.readText() }
-            // Strip // line comments — the JSON file uses them for readability
-            // but Kotlinx Serialization rejects non-standard JSON.
+            parseLookup(raw)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    private fun parseLookup(raw: String): BandCarrierLookup? {
+        return try {
+            // Strip // line comments for safety (bundled asset used to have them)
             val clean = raw.lines()
                 .map { line -> line.substringBefore("//").trimEnd() }
                 .joinToString("\n")
-            bandLookup = Json.decodeFromString(clean)
+            json.decodeFromString(clean)
         } catch (e: Exception) {
             e.printStackTrace()
+            null
         }
     }
 

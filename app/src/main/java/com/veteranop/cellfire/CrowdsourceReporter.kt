@@ -24,11 +24,12 @@ object CrowdsourceReporter {
 
     // Source quality ranking — higher = more reliable
     private val SOURCE_QUALITY = mapOf(
-        "alpha"     to 5,
-        "plmn"      to 4,
-        "fcc_band"  to 3,
-        "db"        to 2,
-        "pci_range" to 1
+        "alpha"          to 5,
+        "plmn"           to 4,
+        "exclusive_band" to 3,  // band-law lock (B71→T-Mobile, B13→Verizon, etc.)
+        "fcc_band"       to 3,
+        "db"             to 2,
+        "pci_range"      to 1
     )
 
     private val db by lazy {
@@ -47,12 +48,16 @@ object CrowdsourceReporter {
         lon: Double,
         arfcn: Int,
         band: String,
-        source: String
+        source: String,
+        state: String = ""
     ) {
         if (lat == 0.0 && lon == 0.0) return
-        if (pci <= 0 || tac <= 0) return
-        // Allow Unknown carrier — GPS + (pci, tac) is still valuable for location correlation.
-        // The merge script will fill in carrier once a better-sourced observation arrives.
+        if (pci <= 0) return
+        if (tac >= 0xFFFF) return  // 65535 (0xFFFF) = modem sentinel; 66535+ = overflow — both invalid
+        // TAC=0 is allowed — neighbor cells without TAC are still valuable:
+        //   GPS + PCI + EARFCN lets the merge script do exclusive-band resolution
+        //   and neighbor inference, seeding the tile DB for future lookups.
+        // Unknown carrier is allowed — the server fills it in from band/geo data.
 
         val newQuality = SOURCE_QUALITY.getOrDefault(source, 0)
         val key = packKey(pci, tac)
@@ -73,6 +78,7 @@ object CrowdsourceReporter {
             "arfcn"     to arfcn,
             "band"      to band,
             "source"    to source,
+            "state"     to state,
             "timestamp" to System.currentTimeMillis(),
             "processed" to false
         )
@@ -100,16 +106,19 @@ object CrowdsourceReporter {
      */
     fun submitBulk(
         pci: Int, tac: Int, carrier: String, mnc: String,
-        lat: Double, lon: Double, arfcn: Int, band: String, source: String
+        lat: Double, lon: Double, arfcn: Int, band: String, source: String,
+        state: String = ""
     ) {
         if (lat == 0.0 && lon == 0.0) return
-        if (pci <= 0 || tac <= 0) return
+        if (pci <= 0) return
+        if (tac >= 0xFFFF) return
 
         val tileKey = tileFilename(lat, lon)
         val observation = mapOf(
             "pci" to pci, "tac" to tac, "carrier" to carrier, "mnc" to mnc,
             "lat" to lat, "lon" to lon, "arfcn" to arfcn, "band" to band,
-            "source" to source, "timestamp" to System.currentTimeMillis(), "processed" to false
+            "source" to source, "state" to state,
+            "timestamp" to System.currentTimeMillis(), "processed" to false
         )
 
         val nodeKey = "${pci}_${tac}"

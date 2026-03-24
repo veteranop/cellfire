@@ -1,56 +1,66 @@
 {
-  "lte_band_to_carrier": {
-    "2": ["T-Mobile", "AT&T", "Verizon", "US Cellular"],      // Shared PCS, low confidence
-    "4": ["T-Mobile", "AT&T", "Verizon", "US Cellular"],      // Shared AWS
-    "5": ["AT&T", "Verizon", "US Cellular"],                  // 850 MHz, AT&T/Verizon heavy
-    "12": ["AT&T", "T-Mobile", "US Cellular"],
-    "13": ["Verizon"],                                        // Exclusive/high-confidence
-    "14": ["FirstNet/AT&T"],                                  // Exclusive to FirstNet (AT&T public safety)
-    "17": ["AT&T"],                                           // Added: AT&T rural/suburban
-    "25": ["T-Mobile"],
-    "26": ["T-Mobile"],
-    "41": ["T-Mobile"],                                       // Effectively exclusive (refarmed to n41)
-    "46": ["AT&T", "Verizon", "T-Mobile"],                    // Shared/uncommon
-    "48": ["Verizon", "AT&T", "T-Mobile"],                    // CBRS shared, low confidence
-    "66": ["AT&T", "T-Mobile", "Verizon"],
-    "71": ["T-Mobile"]                                        // T-Mobile primary; Dish exited/sold to AT&T
+  "version": "m26-5",
+
+  "display_names": {
+    "Dish Wireless":    "Dish (Boost)",
+    "FirstNet/AT&T":   "FirstNet",
+    "FirstNet (AT&T)": "FirstNet",
+    "US Cellular":     "UScellular"
   },
 
+  "lte_band_to_carrier": {
+    "2": ["T-Mobile", "AT&T", "Verizon", "US Cellular"],
+    "4": ["T-Mobile", "AT&T", "Verizon", "US Cellular"],
+    "5": ["AT&T", "Verizon", "US Cellular"],
+    "12": ["AT&T", "T-Mobile", "US Cellular"],
+    "13": ["Verizon"],
+    "14": ["FirstNet/AT&T"],
+    "17": ["AT&T"],
+    "25": ["T-Mobile", "Verizon", "US Cellular"],
+    "26": ["T-Mobile"],
+    "41": ["T-Mobile"],
+    "46": ["AT&T", "Verizon", "T-Mobile"],
+    "48": ["Verizon", "AT&T", "T-Mobile"],
+    "66": ["AT&T", "T-Mobile", "Verizon"],
+    "71": ["T-Mobile"],
+    "29": ["Dish Wireless"],
+    "30": ["Dish Wireless", "AT&T"]
+  },
   "nr_band_to_carrier": {
     "2": ["T-Mobile", "AT&T", "Verizon"],
     "5": ["AT&T", "Verizon"],
     "12": ["AT&T", "T-Mobile"],
     "14": ["FirstNet"],
-    "25": ["T-Mobile"],
+    "25": ["T-Mobile", "Verizon", "US Cellular"],
     "41": ["T-Mobile"],
     "66": ["AT&T", "T-Mobile", "Verizon"],
-    "71": ["T-Mobile"],                                       // Dish gone
-    "77": ["AT&T", "Verizon", "T-Mobile"],                    // C-band shared
+    "71": ["T-Mobile"],
+    "77": ["AT&T", "Verizon", "T-Mobile"],
     "78": ["T-Mobile"],
-    "260": ["Verizon"],                                       // mmWave
-    "261": ["T-Mobile"]                                       // mmWave
+    "260": ["Verizon"],
+    "261": ["T-Mobile"],
+    "70": ["Dish Wireless"]
   },
-
   "earfcn_ranges": {
-    "9210-9659": {"band": 41, "name": "Band 41 (2500 MHz TDD) – verify vs logs (may be 39650+ in some devices)"},
-    "23730-23849": {"band": 17, "name": "Band 17 (700 MHz bc) – AT&T"}
-
+    "9210-9659": {"band": 41, "name": "Band 41 (2500 MHz TDD)"},
+    "23730-23849": {"band": 17, "name": "Band 17 (700 MHz) AT&T"}
   },
-
   "carrier_exclusive_bands": {
     "13": "Verizon",
     "14": "FirstNet/AT&T",
+    "26": "T-Mobile",
+    "41": "T-Mobile",
+    "71": "T-Mobile",
     "260": "Verizon",
-    "261": "T-Mobile"
-
+    "261": "T-Mobile",
+    "29": "Dish Wireless",
+    "70": "Dish Wireless"
   },
-
   "carrier_priority_bands": {
     "T-Mobile": [71, 41, 25, 26, 66, 2, 4],
     "Verizon": [13, 5, 2, 4, 66, 48],
-    "AT&T": [14, 12, 5, 17, 2, 4, 66],  // Added 17
+    "AT&T": [14, 12, 5, 17, 2, 4, 66],
     "FirstNet": [14],
     "US Cellular": [12, 5, 4, 2]
-
   }
 }

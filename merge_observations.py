@@ -44,6 +44,7 @@ import urllib.request
 from collections import defaultdict
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 import urllib3
 import firebase_admin
@@ -90,12 +91,114 @@ log = logging.getLogger("cellfire_merge")
 SOURCE_BASE_SCORE = {
     "alpha":           100,  # operatorAlphaLong — registered modem confirmation
     "plmn":            100,  # MCC+MNC table match on registered cell
-    "fcc_band":         90,  # exclusive band (B13/B14/B71) — no ambiguity possible
+    "earfcn_tac":      100,  # TAC resolved via EARFCN match — same PCI+EARFCN = same cell
+    "exclusive_band":   90,  # spectrum-law exclusive (B41/B71/B13/B14) — only one carrier possible
+    "fcc_band":         90,  # FCC geo + band verified for shared bands
     "db":               70,  # confirmed by a prior crowd observation, source lost
     "neighbor_infer":   55,  # inferred from nearby confirmed cells (PCI/TAC/geo proximity)
     "pci_range":        20,  # hardcoded PCI bucket — educated guess only
 }
 SOURCE_BASE_DEFAULT = 40  # OCID-seeded records with no source field
+
+# ── Server-side exclusive band resolution ────────────────────────────────────
+#
+# When a neighbor cell arrives with carrier="Unknown" but has a known EARFCN,
+# we can resolve exclusive bands immediately — no geo lookup needed.
+# These are bands where only one carrier holds US licenses.
+#
+# LTE EARFCN ranges (3GPP TS 36.104 Table 5.7.3-1):
+#   B13:  5180–5279   Verizon 700 Upper C
+#   B14:  5280–5379   FirstNet/AT&T 700 Upper E
+#   B29:  9660–9769   Dish Wireless 700 Lower D/E SDL
+#   B41: 39650–41589  T-Mobile 2.5 GHz TDD (ex-Sprint)
+#   B71: 68586–68935  T-Mobile 600 MHz
+#
+# NR-ARFCN ranges (3GPP TS 38.104):
+#   n41: 499200–538000   T-Mobile 2.5 GHz TDD
+#   n71: 123400–130400   T-Mobile 600 MHz
+#   n70: 399000–404000   Dish Wireless AWS-4
+#   n260: 2229165+        Verizon 39 GHz mmWave
+#   n261: 2070832–2229164 T-Mobile 28 GHz mmWave
+
+_EXCLUSIVE_LTE_EARFCN = [
+    (5180,   5279,   "Verizon"),        # B13
+    (5280,   5379,   "FirstNet/AT&T"),  # B14
+    (8690,   9039,   "T-Mobile"),       # B26  (850 MHz ex-Sprint, T-Mobile exclusive post-merger)
+    (9660,   9769,   "Dish Wireless"),  # B29
+    (39650,  41589,  "T-Mobile"),       # B41
+    (68586,  68935,  "T-Mobile"),       # B71
+]
+
+_EXCLUSIVE_NR_ARFCN = [
+    (123400,  130400,  "T-Mobile"),       # n71
+    (399000,  404000,  "Dish Wireless"),  # n70
+    (499200,  538000,  "T-Mobile"),       # n41
+    (2070832, 2229164, "T-Mobile"),       # n261 28 GHz
+    (2229165, 9999999, "Verizon"),        # n260 39 GHz
+]
+
+
+# ── FCC band license map ─────────────────────────────────────────────────────
+#
+# Loaded from band_license_map.json (local assets or server copy).
+# Inverted from {state: {carrier: [bands]}} to {(state, band_int): [carriers]}.
+# Used in merge_observation() to auto-assign carrier when exactly one carrier
+# holds a band license in that state (conservative — never guesses on shared bands).
+
+_BAND_LICENSE: dict[tuple, list] = {}
+
+
+def _load_band_license_map():
+    paths = [
+        os.path.join(os.path.dirname(__file__), "app", "src", "main", "assets", "band_license_map.json"),
+        os.path.join(SERVER_FILES_PATH, "band_license_map.json"),
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            try:
+                with open(p) as f:
+                    raw = json.load(f)
+                for state, carriers in raw.items():
+                    for carrier, bands in carriers.items():
+                        for band in bands:
+                            _BAND_LICENSE.setdefault((state, band), []).append(carrier)
+                log.info(f"Loaded band_license_map from {p} ({len(_BAND_LICENSE)} state/band pairs)")
+                return
+            except Exception as e:
+                log.warning(f"Failed to load band_license_map from {p}: {e}")
+    log.warning("band_license_map.json not found — FCC band resolution disabled")
+
+
+def resolve_fcc_carrier(state: str, band: str) -> Optional[str]:
+    """
+    Returns the carrier if exactly ONE carrier holds a band license in this state.
+    Returns None if multiple carriers are licensed (can't safely auto-assign).
+    """
+    if not state or not band:
+        return None
+    band_int = _band_to_int(band)
+    if not band_int:
+        return None
+    carriers = _BAND_LICENSE.get((state, band_int), [])
+    return carriers[0] if len(carriers) == 1 else None
+
+
+def resolve_exclusive_carrier(arfcn: int, band: str = "") -> Optional[str]:
+    """
+    Returns the exclusive carrier for a given ARFCN, or None if the band
+    is shared / ARFCN is unknown (0).
+
+    'band' hint is used to distinguish LTE vs NR when arfcn alone is ambiguous
+    (NR-ARFCNs can overlap with LTE EARFCNs in the sub-6 GHz range).
+    """
+    if not arfcn:
+        return None
+    is_nr = band.startswith("n") if band else arfcn >= 123400  # rough NR heuristic
+    table = _EXCLUSIVE_NR_ARFCN if is_nr else _EXCLUSIVE_LTE_EARFCN
+    for lo, hi, carrier in table:
+        if lo <= arfcn <= hi:
+            return carrier
+    return None
 
 
 def _sample_boost(samples: int) -> int:
@@ -471,6 +574,89 @@ def infer_neighbor_carriers(records: list) -> list:
     return records
 
 
+# ── EARFCN-based TAC resolution ──────────────────────────────────────────────
+
+def resolve_tac_by_earfcn(records: list) -> list:
+    """
+    For TAC=0 records that have the same (pci, arfcn) as a real-TAC record,
+    overwrite tac/carrier/conf with the confirmed values at conf=100.
+
+    Rationale: same PCI + same EARFCN in the same tile is the same physical
+    cell — TAC=0 is a phone-side measurement limitation on neighbor cells,
+    not genuine ambiguity. When phone B observes a cell as a serving cell
+    (real TAC, conf≥70) and phone A saw it as a neighbor (tac=0, same EARFCN),
+    we can promote phone A's record to full confidence.
+
+    After resolution, (pci, tac) duplicates are merged: the higher-conf record
+    wins, sample counts are summed.
+    """
+    # Build (pci, arfcn) → best confirmed real-TAC record
+    real_map: dict = {}  # key: (pci, arfcn) → record
+    for rec in records:
+        if rec.get("tac", 0) == 0:
+            continue
+        pci   = rec.get("pci", 0)
+        arfcn = rec.get("arfcn", 0)
+        if not pci or not arfcn:
+            continue
+        key = (pci, arfcn)
+        existing = real_map.get(key)
+        if existing is None or rec.get("conf", 0) > existing.get("conf", 0):
+            real_map[key] = rec
+
+    if not real_map:
+        return records
+
+    resolved = 0
+    for rec in records:
+        if rec.get("tac", 0) != 0:
+            continue
+        pci   = rec.get("pci", 0)
+        arfcn = rec.get("arfcn", 0)
+        if not pci or not arfcn:
+            continue
+        real_rec = real_map.get((pci, arfcn))
+        if not real_rec:
+            continue
+        old_tac = rec["tac"]
+        rec["tac"]     = real_rec["tac"]
+        rec["carrier"] = real_rec["carrier"]
+        rec["mnc"]     = real_rec.get("mnc", rec.get("mnc", ""))
+        rec["conf"]    = 100
+        rec["source"]  = "earfcn_tac"
+        log.info(f"  earfcn_tac pci={pci} arfcn={arfcn} "
+                 f"tac={old_tac}→{real_rec['tac']} carrier={rec['carrier']} conf=100")
+        resolved += 1
+
+    if resolved:
+        log.info(f"  earfcn_tac: resolved {resolved} TAC=0 record(s)")
+
+    # Deduplicate on (pci, tac): resolved records may now collide with existing
+    # real-TAC entries. Keep highest conf; sum sample counts.
+    seen: dict = {}   # (pci, tac) → index in result list
+    result: list = []
+    for rec in records:
+        key = (rec.get("pci", 0), rec.get("tac", 0))
+        if key in seen:
+            idx = seen[key]
+            kept = result[idx]
+            # Accumulate samples
+            kept["samples"] = kept.get("samples", 1) + rec.get("samples", 0)
+            # Higher conf wins all metadata fields except samples
+            if rec.get("conf", 0) > kept.get("conf", 0):
+                samples = kept["samples"]
+                kept.update(rec)
+                kept["samples"] = samples
+        else:
+            seen[key] = len(result)
+            result.append(rec)
+
+    if len(result) < len(records):
+        log.info(f"  earfcn_tac: deduplicated {len(records) - len(result)} merged record(s)")
+
+    return result
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def tile_filename(lat: float, lon: float) -> str:
@@ -545,8 +731,29 @@ def merge_observation(records: list, obs: dict) -> list:
     if pci is None or tac is None:
         return records
 
+    # 0xFFFF (65535) is a modem sentinel meaning "TAC unavailable" — treat as tac=0
+    if tac == 0xFFFF:
+        tac = 0
+
     obs_source  = obs.get("source", "")
     obs_carrier = obs.get("carrier", "Unknown")
+
+    # Server-side carrier resolution for Unknown-carrier observations:
+    # 1. Exclusive band — EARFCN maps to single carrier nationwide
+    # 2. FCC geo — exactly one carrier licensed for this band in this state
+    if obs_carrier in ("Unknown", "", None):
+        exc = resolve_exclusive_carrier(obs.get("arfcn", 0), obs.get("band", ""))
+        if exc:
+            obs_carrier = exc
+            obs_source  = "exclusive_band"
+            log.debug(f"  exclusive_band resolved pci={pci} arfcn={obs.get('arfcn')} → {exc}")
+        else:
+            fcc = resolve_fcc_carrier(obs.get("state", ""), obs.get("band", ""))
+            if fcc:
+                obs_carrier = fcc
+                obs_source  = "fcc_band"
+                log.debug(f"  fcc_band resolved pci={pci} state={obs.get('state')} band={obs.get('band')} → {fcc}")
+
     obs_base    = SOURCE_BASE_SCORE.get(obs_source, SOURCE_BASE_DEFAULT)
 
     for rec in records:
@@ -562,10 +769,14 @@ def merge_observation(records: list, obs: dict) -> list:
                 if obs.get("mnc"):
                     rec["mnc"] = obs["mnc"]
 
-            # Store EARFCN — keep the highest-confidence value seen
-            # (arfcn=0 is unknown; crowd obs always send real EARFCN so overwrite 0)
+            # Store EARFCN — only trust alpha/plmn (registered serving cell).
+            # Neighbor cells inherit the modem's serving EARFCN which is unreliable;
+            # letting them overwrite a confirmed value would corrupt EARFCN lookups.
             obs_arfcn = obs.get("arfcn", 0)
-            if obs_arfcn and (not rec.get("arfcn") or obs_base >= stored_base):
+            if obs_arfcn and obs_source in ("alpha", "plmn"):
+                rec["arfcn"] = obs_arfcn
+            elif obs_arfcn and not rec.get("arfcn"):
+                # No confirmed EARFCN yet — accept the neighbor hint as a placeholder
                 rec["arfcn"] = obs_arfcn
 
             # Update location as running average weighted by samples
@@ -646,6 +857,7 @@ def init_firebase():
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    _load_band_license_map()
     init_firebase()
     log.info("=== Cellfire merge started ===")
     obs_ref = firebase_db.reference("observations")
@@ -679,7 +891,11 @@ def main():
             records = merge_observation(records, obs)
             processed_keys.append((tile_key, node_key))
 
-        # Infer carrier for unresolved cells using confirmed neighbors in tile
+        # EARFCN-TAC resolution: promote TAC=0 records to real TAC at conf=100
+        # when a confirmed real-TAC record exists with the same (pci, arfcn).
+        records = resolve_tac_by_earfcn(records)
+
+        # Infer carrier for remaining unresolved cells using confirmed neighbors
         records = infer_neighbor_carriers(records)
 
         save_tile(filepath, records)
@@ -714,6 +930,7 @@ def reprocess_all():
 
         before = json.dumps(records, sort_keys=True)
         records = backfill_conf(records)
+        records = resolve_tac_by_earfcn(records)
         records = infer_neighbor_carriers(records)
         after = json.dumps(records, sort_keys=True)
 

@@ -1,12 +1,15 @@
 package com.veteranop.cellfire
 
 import android.app.Application
+import com.google.firebase.analytics.FirebaseAnalytics
+import com.google.firebase.analytics.ktx.analytics
 import com.google.firebase.database.ktx.database
 import com.google.firebase.ktx.Firebase
 import dagger.hilt.android.HiltAndroidApp
 
 @HiltAndroidApp
 class CellFireApplication : Application() {
+
     override fun onCreate() {
         super.onCreate()
         CarrierResolver.initialize(this)
@@ -14,5 +17,8 @@ class CellFireApplication : Application() {
         // Must be called before any other Firebase Database usage.
         Firebase.database("https://veteranopcom-default-rtdb.firebaseio.com")
             .setPersistenceEnabled(true)
+        // Initialize analytics singleton — wrapped so any Firebase config issue
+        // never crashes the app on startup.
+        try { CellfireAnalytics.init(this) } catch (_: Exception) { }
     }
 }

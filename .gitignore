@@ -13,3 +13,7 @@
 .externalNativeBuild
 .cxx
 local.properties
+push_rules_config.py
+serviceAccountKey.json
+cellfire_admin.py
+run_admin.bat

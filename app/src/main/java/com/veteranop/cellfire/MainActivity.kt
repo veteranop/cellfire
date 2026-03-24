@@ -2,6 +2,7 @@ package com.veteranop.cellfire
 
 import android.Manifest
 import android.app.Application
+import com.veteranop.cellfire.BuildConfig
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -110,8 +111,14 @@ class MainActivity : ComponentActivity() {
                             CellDetailScreen(vm, pci, arfcn, navController)
                         }
                         composable("raw") { RawLogScreen(vm) }
-                        composable("about") { AboutScreen() }
-                        composable("settings") { SettingsScreen(vm) }
+                        composable("about") {
+                            CellfireAnalytics.aboutScreenOpened()
+                            AboutScreen()
+                        }
+                        composable("settings") {
+                            CellfireAnalytics.settingsScreenOpened()
+                            SettingsScreen(vm)
+                        }
                         composable("pci_table") { PciTableScreen(navController, vm) }
                         composable("pci_carrier_list/{carrier}") { backStackEntry ->
                             val carrier = backStackEntry.arguments?.getString("carrier") ?: ""
@@ -148,7 +155,7 @@ fun StartScreen(navController: NavController, vm: CellFireViewModel) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Image(painter = painterResource(id = R.drawable.app_name), contentDescription = "app logo")
-            Text("1.0.0.4_Stable", style = MaterialTheme.typography.bodyLarge, color = Color.White)
+            Text(BuildConfig.VERSION_NAME, style = MaterialTheme.typography.bodyLarge, color = Color.White)
             Spacer(modifier = Modifier.height(32.dp))
             Button(onClick = { navController.navigate("scan") }, modifier = Modifier.fillMaxWidth()) { Text("Start Scan") }
             Spacer(modifier = Modifier.height(8.dp))
@@ -205,15 +212,17 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
             Column(modifier = Modifier.padding(innerPadding).padding(16.dp)) {
                 Image(painter = painterResource(id = R.drawable.app_name), contentDescription = "app logo", modifier = Modifier.padding(bottom = 16.dp))
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     ElevatedButton(
                         onClick = { vm.toggleMonitoring() },
+                        modifier = Modifier.weight(1f),
                         colors = if (state.isMonitoring) ButtonDefaults.elevatedButtonColors(containerColor = Color.Black, contentColor = Color.Red) else ButtonDefaults.elevatedButtonColors()
                     ) {
-                        Text(if (state.isMonitoring) "CEASE FIRE" else "ENGAGE TARGETS")
+                        Text(if (state.isMonitoring) "CEASE FIRE" else "ENGAGE", maxLines = 1)
                     }
                     ElevatedButton(
                         onClick = { vm.toggleDeepScan(!deepScanActive) },
+                        modifier = Modifier.weight(1f).shadow(12.dp, RoundedCornerShape(32.dp)),
                         colors = ButtonDefaults.elevatedButtonColors(
                             containerColor = if (deepScanActive) Color(0xFFFF6B00) else Color(0xFF2D2D2D),
                             contentColor = Color.White
@@ -221,8 +230,7 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                         elevation = ButtonDefaults.elevatedButtonElevation(
                             defaultElevation = 8.dp,
                             pressedElevation = 12.dp
-                        ),
-                        modifier = Modifier.shadow(12.dp, RoundedCornerShape(32.dp))
+                        )
                     ) {
                         Text(
                             text = "DEEP SCAN: ${if (deepScanActive) "ACTIVE" else "PASSIVE"}",
@@ -277,8 +285,9 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                                 "t-mobile", "t-mobile (low-band)" -> Color(0xFFE20074)
                                 "verizon", "verizon (b5)" -> Color(0xFFCC0000)
                                 "at&t" -> Color(0xFF00A8E8)
-                                "firstnet" -> Color.Black
-                                "dish wireless" -> Color(0xFFFF6200)
+                                "firstnet", "firstnet/at&t", "firstnet (at&t)" -> Color.Black
+                                "dish wireless", "dish (boost)", "dish" -> Color(0xFFFF6200)
+                                "us cellular", "uscellular" -> Color(0xFF6A0DAD)
                                 else -> Color.DarkGray
                 }
                             val finalColor = if (discoveredPci?.isTargeted == true) Color.Cyan else cellColor
@@ -298,11 +307,11 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                                     CellfireDbManager.lookupMatchLevel(cell.pci, cell.tac)
                                 }
                                 val dotColor = when (rowMatchLevel) {
-                                    DbMatchLevel.EXACT     -> Color(0xFF2196F3)
-                                    DbMatchLevel.HIGH_CONF -> Color(0xFF4CAF50)
-                                    DbMatchLevel.MED_CONF  -> Color(0xFFFFC107)
-                                    DbMatchLevel.LOW_CONF  -> Color(0xFFF44336)
-                                    DbMatchLevel.NONE      -> Color(0xFF9E9E9E)
+                                    DbMatchLevel.EXACT     -> Color(0xFF1B5E20)  // dark green — verified by registered user (conf=100)
+                                    DbMatchLevel.HIGH_CONF -> Color(0xFF4CAF50)  // green — high confidence
+                                    DbMatchLevel.MED_CONF  -> Color(0xFFFFC107)  // yellow — medium confidence
+                                    DbMatchLevel.LOW_CONF  -> Color(0xFFF44336)  // red — low confidence
+                                    DbMatchLevel.NONE      -> Color(0xFF9E9E9E)  // grey — no DB record
                                 }
                                 Text(
                                     text = "● ",
@@ -326,7 +335,7 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
 }
                 }
 
-                Text(text = "1.0.0.4_Stable • VeteranOp Industries", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
+                Text(text = "${BuildConfig.VERSION_NAME} • Cellfire", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
             }
         }
     }
@@ -389,13 +398,30 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                         Text(
                             "●",
                             color = when (matchLevel) {
-                                DbMatchLevel.EXACT      -> Color(0xFF2196F3) // Blue   — conf 100, registered device confirmed
-                                DbMatchLevel.HIGH_CONF  -> Color(0xFF4CAF50) // Green  — conf 75–99, strong crowd/FCC
-                                DbMatchLevel.MED_CONF   -> Color(0xFFFFC107) // Yellow — conf 40–74, OCID seed or PCI-only
-                                DbMatchLevel.LOW_CONF   -> Color(0xFFF44336) // Red    — conf <40, pci_range guess
-                                DbMatchLevel.NONE       -> Color(0xFF9E9E9E) // Grey   — not in DB
+                                DbMatchLevel.EXACT      -> Color(0xFF1B5E20)
+                                DbMatchLevel.HIGH_CONF  -> Color(0xFF4CAF50)
+                                DbMatchLevel.MED_CONF   -> Color(0xFFFFC107)
+                                DbMatchLevel.LOW_CONF   -> Color(0xFFF44336)
+                                DbMatchLevel.NONE       -> Color(0xFF9E9E9E)
                             },
                             style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    val dbConf = remember(currentCell.pci, currentCell.tac) {
+                        (CellfireDbManager.lookupByPciTac(currentCell.pci, currentCell.tac)
+                            ?: CellfireDbManager.lookupByPciOnly(currentCell.pci))?.conf
+                    }
+                    if (dbConf != null && dbConf > 0) {
+                        val confColor = when {
+                            dbConf == 100 -> Color(0xFF1B5E20)
+                            dbConf >= 75  -> Color(0xFF4CAF50)
+                            dbConf >= 40  -> Color(0xFFFFC107)
+                            else          -> Color(0xFFF44336)
+                        }
+                        Text(
+                            "Carrier accuracy: $dbConf / 100",
+                            color = confColor,
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                     Text("PCI: ${currentCell.pci}", color = Color.White)
@@ -825,6 +851,7 @@ fun SettingsScreen(vm: CellFireViewModel) {
             }
             Button(
                 onClick = {
+                    CellfireAnalytics.dbSyncRequested()
                     scope.launch {
                         isSyncing = true
                         CellfireDbManager.clearCache()
@@ -871,11 +898,13 @@ fun SettingsScreen(vm: CellFireViewModel) {
             }
             Button(
                 onClick = {
+                    CellfireAnalytics.pciUploadRequested(validCount)
                     isUploading = true
                     uploadResult = ""
                     vm.uploadDiscovered { uploaded, skipped ->
                         isUploading = false
                         uploadResult = "Sent $uploaded" + if (skipped > 0) ", $skipped skipped (no GPS)" else ""
+                        CellfireAnalytics.pciUploadCompleted(uploaded, skipped)
                     }
                 },
                 enabled = !isUploading && validCount > 0
@@ -884,7 +913,100 @@ fun SettingsScreen(vm: CellFireViewModel) {
             }
         }
 
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Signal Rules
+        var rulesVersion by remember { mutableStateOf(CarrierResolver.currentVersion()) }
+        var rulesUpdating by remember { mutableStateOf(false) }
+        var rulesStatus by remember { mutableStateOf("") }
+
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Signal Rules", color = Color.White)
+                Text(
+                    rulesVersion + if (rulesStatus.isNotEmpty()) " · $rulesStatus" else "",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            if (rulesUpdating) {
+                CircularProgressIndicator(modifier = Modifier.padding(8.dp))
+            } else {
+                Button(onClick = {
+                    CellfireAnalytics.signalRulesUpdateRequested()
+                    rulesUpdating = true
+                    rulesStatus = ""
+                    scope.launch {
+                        val newVersion = CarrierResolver.fetchUpdate()
+                        rulesUpdating = false
+                        if (newVersion != null) {
+                            rulesVersion = newVersion
+                            rulesStatus = "Updated"
+                            CellfireAnalytics.signalRulesUpdated(newVersion, true)
+                        } else {
+                            rulesStatus = "Failed"
+                            CellfireAnalytics.signalRulesUpdated(rulesVersion, false)
+                        }
+                    }
+                }) {
+                    Text("Update")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // App Update
+        var updateStatus by remember { mutableStateOf("") }
+        var isCheckingUpdate by remember { mutableStateOf(false) }
+        var isDownloadingUpdate by remember { mutableStateOf(false) }
+        var pendingUpdate by remember { mutableStateOf<AppUpdater.UpdateInfo?>(null) }
+
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("App Update", color = Color.White)
+                Text(
+                    "Current: ${BuildConfig.VERSION_NAME}" +
+                        if (updateStatus.isNotEmpty()) " · $updateStatus" else "",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            if (isCheckingUpdate || isDownloadingUpdate) {
+                CircularProgressIndicator(modifier = Modifier.padding(8.dp))
+            } else if (pendingUpdate != null) {
+                Button(onClick = {
+                    isDownloadingUpdate = true
+                    updateStatus = "Downloading..."
+                    scope.launch {
+                        val ok = AppUpdater.downloadAndInstall(context, pendingUpdate!!.downloadUrl)
+                        isDownloadingUpdate = false
+                        updateStatus = if (ok) "Installing..." else "Download failed"
+                    }
+                }) {
+                    Text("Install ${pendingUpdate!!.tagName}")
+                }
+            } else {
+                Button(onClick = {
+                    isCheckingUpdate = true
+                    updateStatus = ""
+                    pendingUpdate = null
+                    scope.launch {
+                        val info = AppUpdater.checkForUpdate(BuildConfig.VERSION_NAME)
+                        isCheckingUpdate = false
+                        when {
+                            info == null        -> updateStatus = "Check failed"
+                            info.isNewer        -> { pendingUpdate = info; updateStatus = "${info.tagName} available" }
+                            else                -> updateStatus = "Up to date"
+                        }
+                    }
+                }) {
+                    Text("Check")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
 
         // Clear All Data
         var showClearConfirm by remember { mutableStateOf(false) }
@@ -903,6 +1025,7 @@ fun SettingsScreen(vm: CellFireViewModel) {
                             sharedPreferences.edit().clear().apply()
                             crowdsourceEnabled = true
                             lastSynced = 0L
+                            CellfireAnalytics.allDataCleared()
                             vm.clearAllData { isClearing = false }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
@@ -940,14 +1063,191 @@ fun SettingsScreen(vm: CellFireViewModel) {
 
 @Composable
 fun AboutScreen() {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("CellFire", style = MaterialTheme.typography.headlineLarge, color = Color.White)
-        Text("v1.0.0.5_Stable", style = MaterialTheme.typography.bodyLarge, color = Color.White)
-        Spacer(modifier = Modifier.height(16.dp))
-        Text("Made by VeteranOp LLC", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+        item {
+            Text("CELLFIRE", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+            Text("v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Cellfire is a real-time LTE and 5G NR cell tower scanner. It uses your " +
+                "device's radio hardware to identify nearby towers, resolve their carrier, " +
+                "band, and signal metrics, and crowdsource that data to the Cellfire " +
+                "community database to improve coverage for everyone.",
+                style = MaterialTheme.typography.bodySmall, color = Color.LightGray
+            )
+        }
+
+        item { Divider(color = Color.DarkGray) }
+
+        // ── Dot color index ──────────────────────────────────────────────────
+        item {
+            Text("CONFIDENCE INDICATOR", style = MaterialTheme.typography.labelLarge, color = Color(0xFFFFD700))
+            Spacer(Modifier.height(8.dp))
+            val dots = listOf(
+                Triple(Color(0xFF2196F3), "Blue",   "Your registered (serving) cell — carrier confirmed directly by the modem."),
+                Triple(Color(0xFF4CAF50), "Green",  "High confidence (75–99) — FCC band match or strong crowd-confirmed record."),
+                Triple(Color(0xFFFFC107), "Yellow", "Medium confidence (40–74) — database or PCI inference. Likely correct."),
+                Triple(Color(0xFFF44336), "Red",    "Low confidence (<40) — PCI-range guess only. Treat as approximate."),
+                Triple(Color(0xFF9E9E9E), "Grey",   "Not in database — no record found for this tower in any loaded tile."),
+            )
+            dots.forEach { (color, label, desc) ->
+                Row(modifier = Modifier.padding(vertical = 4.dp)) {
+                    Text("● ", color = color, style = MaterialTheme.typography.bodyMedium)
+                    Column {
+                        Text(label, color = Color.White, style = MaterialTheme.typography.bodySmall, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                        Text(desc, color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+
+        item { Divider(color = Color.DarkGray) }
+
+        // ── Measurement definitions ──────────────────────────────────────────
+        item {
+            Text("MEASUREMENTS", style = MaterialTheme.typography.labelLarge, color = Color(0xFFFFD700))
+            Spacer(Modifier.height(8.dp))
+            val defs = listOf(
+                "RSRP" to "Reference Signal Received Power (dBm). Raw signal strength from the tower. " +
+                    "≥ −85 good  |  −85 to −100 fair  |  < −100 weak. Lower numbers mean weaker signal.",
+                "RSRQ" to "Reference Signal Received Quality (dB). Signal quality relative to interference " +
+                    "and noise. ≥ −10 good  |  −10 to −15 fair  |  < −15 poor.",
+                "SNR / SINR" to "Signal-to-Interference-plus-Noise Ratio (dB). Indicator of data throughput " +
+                    "potential. Higher is better. > 20 = excellent  |  0–20 = normal  |  < 0 = congested.",
+                "Band" to "LTE or NR frequency band (e.g. B66 = AWS-3 ≈ 1700/2100 MHz, B12 = 700 MHz low-band, " +
+                    "n71 = 600 MHz NR low-band). Low bands travel farther; high bands carry more data.",
+                "EARFCN / ARFCN" to "Absolute Radio Frequency Channel Number. Encodes the exact downlink " +
+                    "frequency channel within a band. Unique per carrier per market — the primary RF fingerprint " +
+                    "used to distinguish T-Mobile from AT&T on shared bands like B66.",
+                "UL Freq" to "Uplink frequency (MHz) — your phone transmitting to the tower.",
+                "DL Freq" to "Downlink frequency (MHz) — tower transmitting to your phone.",
+                "BW" to "Channel bandwidth in MHz (5, 10, 15, 20 MHz for LTE; up to 100 MHz for NR). " +
+                    "Wider bandwidth = higher peak speeds.",
+                "PCI" to "Physical Cell Identity (0–503). A local broadcast identifier used by the radio " +
+                    "to distinguish towers. Not globally unique — different carriers can reuse the same PCI " +
+                    "number on different frequencies.",
+                "TAC" to "Tracking Area Code. A carrier-assigned network identifier for a geographic market. " +
+                    "Reliable carrier fingerprint — if you know the TAC, you know the carrier.",
+            )
+            defs.forEach { (term, explanation) ->
+                Column(modifier = Modifier.padding(vertical = 5.dp)) {
+                    Text(term, color = Color.White, style = MaterialTheme.typography.bodySmall,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text(explanation, color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        item { Divider(color = Color.DarkGray) }
+
+        // ── Settings explanations ────────────────────────────────────────────
+        item {
+            Text("SETTINGS EXPLAINED", style = MaterialTheme.typography.labelLarge, color = Color(0xFFFFD700))
+            Spacer(Modifier.height(8.dp))
+            val settings = listOf(
+                "Upload cell data" to
+                    "Automatically submits tower observations to the Cellfire community database " +
+                    "when your phone is registered on a confirmed cell. Only sends when carrier, " +
+                    "location, and TAC are all verified. Toggle off for privacy or to save data.",
+                "Sync DB" to
+                    "Downloads cell tower data tiles from cellfire.io for your current area " +
+                    "(≈80-mile radius). Tiles are cached on-device and refreshed every 5 minutes " +
+                    "while you're moving. Use this button to force an immediate refresh.",
+                "Upload discovered PCIs" to
+                    "Sends the list of unique PCIs your phone has seen — along with their " +
+                    "confirmed TACs — to the community database. This helps seed new areas with " +
+                    "carrier data even when crowd coverage is sparse.",
+                "Signal Rules" to
+                    "Downloads the latest carrier band-licensing rules from cellfire.io. These rules " +
+                    "determine which carriers are valid on each frequency band (e.g. only T-Mobile " +
+                    "can appear on B71, only Verizon on B13). The version tag (e.g. m26-1 = " +
+                    "March 2026, revision 1) tells you what rule set is currently loaded. " +
+                    "Tap Update to pull the latest version.",
+                "Clear All Data" to
+                    "Wipes all locally stored data: tile cache, discovered PCI list, drive test " +
+                    "points, and all app settings. Use this to start fresh or if the app is " +
+                    "showing stale data. This cannot be undone.",
+                "App Update" to
+                    "Checks GitHub for a newer release of Cellfire. Tap Check — if an update " +
+                    "is available the button changes to Install with the version number. Tapping " +
+                    "Install downloads the APK and hands it to the Android installer. No Play " +
+                    "Store required.",
+            )
+            settings.forEach { (title, desc) ->
+                Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                    Text(title, color = Color.White, style = MaterialTheme.typography.bodySmall,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text(desc, color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        item { Divider(color = Color.DarkGray) }
+
+        // ── Discovered PCIs ──────────────────────────────────────────────────
+        item {
+            Text("DISCOVERED PCIs", style = MaterialTheme.typography.labelLarge, color = Color(0xFFFFD700))
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "The Discovered PCIs table is a log of every unique cell tower your phone has " +
+                "detected — including neighbor cells that aren't your active connection. Each " +
+                "entry shows the PCI, band, resolved carrier, TAC, and the source of the " +
+                "carrier identification (e.g. alpha = modem confirmed, db = community database, " +
+                "exclusive_band = spectrum law).",
+                style = MaterialTheme.typography.bodySmall, color = Color.LightGray
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Tapping a PCI opens the detail view with signal history and a map pin. The " +
+                "Upload button in Settings sends your confirmed discoveries to the Cellfire " +
+                "community database, helping improve carrier identification for other users " +
+                "in your area.",
+                style = MaterialTheme.typography.bodySmall, color = Color.LightGray
+            )
+        }
+
+        item { Divider(color = Color.DarkGray) }
+
+        // ── How mapping works ────────────────────────────────────────────────
+        item {
+            Text("HOW MAPPING WORKS", style = MaterialTheme.typography.labelLarge, color = Color(0xFFFFD700))
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Cellfire divides the map into 0.5° grid tiles (roughly 30–35 miles square). " +
+                "When you start the app, it downloads tiles for an ~80-mile radius around you " +
+                "from cellfire.io. Each tile is a compressed list of known towers with their " +
+                "PCI, TAC, carrier, GPS location, and a confidence score.",
+                style = MaterialTheme.typography.bodySmall, color = Color.LightGray
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "When a cell is detected, the app checks the tile database for a matching " +
+                "PCI + TAC record. A match gives an instant carrier label without any network " +
+                "request. Tiles are seeded from OpenCellID data and continuously improved by " +
+                "Cellfire users who have Upload Cell Data enabled.",
+                style = MaterialTheme.typography.bodySmall, color = Color.LightGray
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Carrier accuracy score (1–100) reflects how many independent confirmations " +
+                "a record has. Score 100 means a registered device confirmed the carrier " +
+                "directly from the modem. Score 40–74 means the record came from the community " +
+                "database or band inference and is likely correct. Score < 40 is a rough guess " +
+                "based on PCI range only.",
+                style = MaterialTheme.typography.bodySmall, color = Color.LightGray
+            )
+        }
+
+        item { Divider(color = Color.DarkGray) }
+
+        item {
+            Text("cellfire.io", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+        }
     }
 }

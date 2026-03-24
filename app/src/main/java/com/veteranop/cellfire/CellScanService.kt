@@ -349,30 +349,46 @@ class CellScanService : LifecycleService() {
 
                 val pci = if (identity.pci == Int.MAX_VALUE) 0 else identity.pci
                 val tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac
+                // EARFCN lookup only when carrier is already confirmed (alpha/plmn) —
+                // neighbor cells inherit the modem's serving EARFCN and it's unreliable.
+                // Unconfirmed cells fall through to lookupByPciOnly instead.
+                val earfcnConfirmed = crowdsourceSource == "alpha" || confirmedMnc.isNotBlank()
                 val dbResult = CellfireDbManager.lookupByPciTac(pci, tac)
+                    ?: if (tac == 0 && identity.earfcn > 0 && earfcnConfirmed)
+                           CellfireDbManager.lookupByPciEarfcn(pci, identity.earfcn)
+                       else null
                 if (carrier == "Unknown" || carrier == "null") {
                     val bandLabel = earfcnToLteBand(identity.earfcn)
-                    val fccCarrier = BandLicenseMap.resolveCarrier(currentState, bandLabel, identity.earfcn)
+                    val exclusiveCarrier = CarrierResolver.resolveExclusiveCarrier(bandLabel)
                     when {
-                        // FCC license match is ground truth — band+EARFCN+geo verified,
-                        // no further validation needed. Takes priority over stale DB records.
-                        fccCarrier != null -> {
-                            carrier = fccCarrier
-                            crowdsourceSource = "fcc_band"
+                        // 1. Exclusive band — inviolable, no geo/DB needed
+                        exclusiveCarrier != null -> {
+                            carrier = exclusiveCarrier
+                            crowdsourceSource = "exclusive_band"
                         }
-                        // DB result: validate against band — OCID data can be stale/wrong
-                        // (e.g. Verizon tagged on B12 which Verizon doesn't use).
+                        // 2. DB — server has already applied FCC + crowdsourced scoring
                         dbResult != null -> {
                             carrier = if (CarrierResolver.isCarrierValidForBand(
                                     dbResult.carrier, identity.earfcn, bandLabel)) dbResult.carrier else "Unknown"
                             crowdsourceSource = "db"
                         }
-                        // PCI range guess: validate against band before using
                         else -> {
-                            val pciCarrier = pciToCarrier(pci)
-                            carrier = if (CarrierResolver.isCarrierValidForBand(
-                                    pciCarrier, identity.earfcn, bandLabel)) pciCarrier else "Unknown"
-                            crowdsourceSource = "pci_range"
+                            // 3. PCI-only DB lookup
+                            val pciOnly = CellfireDbManager.lookupByPciOnly(pci)
+                            when {
+                                pciOnly != null && CarrierResolver.isCarrierValidForBand(
+                                        pciOnly.carrier, identity.earfcn, bandLabel) -> {
+                                    carrier = pciOnly.carrier
+                                    crowdsourceSource = "db"
+                                }
+                                else -> {
+                                    // 4. PCI range heuristic — last resort
+                                    val pciCarrier = pciToCarrier(pci)
+                                    carrier = if (CarrierResolver.isCarrierValidForBand(
+                                            pciCarrier, identity.earfcn, bandLabel)) pciCarrier else "Unknown"
+                                    crowdsourceSource = "pci_range"
+                                }
+                            }
                         }
                     }
                 }
@@ -390,7 +406,8 @@ class CellScanService : LifecycleService() {
                         lon = lastLongitude,
                         arfcn = identity.earfcn,
                         band = earfcnToLteBand(identity.earfcn),
-                        source = crowdsourceSource
+                        source = crowdsourceSource,
+                        state = currentState
                     )
                 }
 
@@ -410,7 +427,7 @@ class CellScanService : LifecycleService() {
                     signalQuality = snr,
                     rsrq = strength.rsrq,
                     isRegistered = info.isRegistered,
-                    carrier = carrier,
+                    carrier = CarrierResolver.displayName(carrier),
                     tac = tac,
                     latitude = lastLatitude,
                     longitude = lastLongitude,
@@ -444,26 +461,46 @@ class CellScanService : LifecycleService() {
                     val pci = if (identity.pci == Int.MAX_VALUE) 0 else identity.pci
                     val tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac
 
+                    // Only use NR-ARFCN lookup when carrier is already confirmed —
+                    // neighbor cell ARFCNs are unreliable (modem copies serving ARFCN).
+                    val nrArfcnConfirmed = crowdsourceSource == "alpha" || confirmedMnc.isNotBlank()
                     val dbResult = CellfireDbManager.lookupByPciTac(pci, tac)
+                        ?: if (tac == 0 && identity.nrarfcn > 0 && nrArfcnConfirmed)
+                               CellfireDbManager.lookupByPciEarfcn(pci, identity.nrarfcn)
+                           else null
 
                     if (carrier == "Unknown" || carrier == "null" || carrier.isBlank()) {
                         val nrBand = nrarfcnToNrBand(identity.nrarfcn)
-                        val fccCarrier = BandLicenseMap.resolveCarrier(currentState, nrBand, identity.nrarfcn)
+                        val exclusiveCarrier = CarrierResolver.resolveExclusiveCarrier(nrBand)
                         when {
-                            fccCarrier != null -> {
-                                carrier = fccCarrier
-                                crowdsourceSource = "fcc_band"
+                            // 1. Exclusive NR band — inviolable
+                            exclusiveCarrier != null -> {
+                                carrier = exclusiveCarrier
+                                crowdsourceSource = "exclusive_band"
                             }
+                            // 2. DB — server-side crowdsourced truth
                             dbResult != null -> {
                                 carrier = if (CarrierResolver.isCarrierValidForBand(
                                         dbResult.carrier, identity.nrarfcn, nrBand, isNr = true)) dbResult.carrier else "Unknown"
                                 crowdsourceSource = "db"
                             }
                             else -> {
-                                val pciCarrier = pciToCarrier(pci)
-                                carrier = if (CarrierResolver.isCarrierValidForBand(
-                                        pciCarrier, identity.nrarfcn, nrBand, isNr = true)) pciCarrier else "Unknown"
-                                crowdsourceSource = "pci_range"
+                                // 3. PCI-only DB lookup
+                                val pciOnly = CellfireDbManager.lookupByPciOnly(pci)
+                                when {
+                                    pciOnly != null && CarrierResolver.isCarrierValidForBand(
+                                            pciOnly.carrier, identity.nrarfcn, nrBand, isNr = true) -> {
+                                        carrier = pciOnly.carrier
+                                        crowdsourceSource = "db"
+                                    }
+                                    else -> {
+                                        // 4. PCI range heuristic — last resort
+                                        val pciCarrier = pciToCarrier(pci)
+                                        carrier = if (CarrierResolver.isCarrierValidForBand(
+                                                pciCarrier, identity.nrarfcn, nrBand, isNr = true)) pciCarrier else "Unknown"
+                                        crowdsourceSource = "pci_range"
+                                    }
+                                }
                             }
                         }
                     }
@@ -480,7 +517,8 @@ class CellScanService : LifecycleService() {
                             lon = lastLongitude,
                             arfcn = identity.nrarfcn,
                             band = nrarfcnToNrBand(identity.nrarfcn),
-                            source = crowdsourceSource
+                            source = crowdsourceSource,
+                            state = currentState
                         )
                     }
 
@@ -501,7 +539,7 @@ class CellScanService : LifecycleService() {
                         signalQuality = snr,
                         rsrq = rsrq,
                         isRegistered = info.isRegistered,
-                        carrier = carrier,
+                        carrier = CarrierResolver.displayName(carrier),
                         tac = tac,
                         latitude = lastLatitude,
                         longitude = lastLongitude,
@@ -552,16 +590,25 @@ class CellScanService : LifecycleService() {
         }
     }
 
+    /**
+     * Rough PCI-range carrier hint. PCI is geographically assigned, not carrier-exclusive,
+     * so this is always a heuristic. Result is validated against the observed band before use —
+     * if the band contradicts this guess, the caller discards it and returns "Unknown".
+     *
+     * Note: "FirstNet" maps to "AT&T" here because FirstNet runs on AT&T spectrum/infrastructure.
+     * Band validation uses lte_band_to_carrier which lists "AT&T" (not "FirstNet"), so matching
+     * the string avoids spurious validation failures on shared bands like B66.
+     */
     private fun pciToCarrier(pci: Int): String {
+        // PCI mod-3 group is used in network planning but doesn't directly identify a carrier.
+        // These ranges are broad market-level heuristics based on observed allocations.
         return when (pci) {
-            in 0..107   -> "T-Mobile"
-            in 108..179 -> "T-Mobile"
-            in 180..251 -> "Verizon"
-            in 252..287 -> "Verizon"
-            in 288..359 -> "AT&T"
-            in 360..395 -> "FirstNet"
-            in 396..431 -> "Dish Wireless"
-            in 432..467 -> "US Cellular"
+            in 0..179   -> "T-Mobile"   // T-Mobile typically 0–179
+            in 180..251 -> "Verizon"    // Verizon 180–251
+            in 252..287 -> "Verizon"    // Extended Verizon
+            in 288..395 -> "AT&T"       // AT&T + FirstNet (same physical network, same spectrum)
+            in 396..431 -> "AT&T"       // Dish Wireless rebranded/sold to AT&T footprint; treat as AT&T
+            in 432..503 -> "US Cellular"  // full upper block through PCI max (503)
             else        -> "Unknown"
         }
     }
@@ -602,7 +649,8 @@ class CellScanService : LifecycleService() {
             in 8040..8689 -> "B25"
             in 8690..9039 -> "B26"
             in 9210..9659 -> "B28"
-            in 9920..10359 -> "B30"
+            in 9660..9769 -> "B29"   // 717–728 MHz Dish lower 700 SDL
+            in 9920..10359 -> "B30"  // 2350–2360 MHz Dish/AT&T WCS
             in 37750..38249 -> "B38"
             in 38650..39649 -> "B40"
             in 39650..41589 -> "B41"
@@ -630,9 +678,11 @@ class CellScanService : LifecycleService() {
             nrarfcn in 422000..440000 -> "n66"  // 2110–2200 MHz AWS DL
             nrarfcn in 386000..399000 -> "n25"  // 1930–1995 MHz PCS DL
             nrarfcn in 173800..178800 -> "n5"   // 869–894 MHz 850 MHz DL
+            nrarfcn in 399000..404000 -> "n70"  // 1995–2020 MHz AWS-4 DL (Dish primary NR)
             nrarfcn in 151600..153600 -> "n14"  // 758–768 MHz 700 Upper E DL (AT&T/FirstNet)
             nrarfcn in 149200..151400 -> "n13"  // 746–757 MHz 700 Upper C DL (Verizon)
             nrarfcn in 145800..149200 -> "n12"  // 729–746 MHz 700 Lower A/B DL
+            nrarfcn in 143400..145800 -> "n29"  // 717–728 MHz 700 Lower D/E SDL (Dish LTE)
             nrarfcn in 123400..130400 -> "n71"  // 617–652 MHz 600 MHz DL (T-Mobile dominant)
             else -> "n??"
         }

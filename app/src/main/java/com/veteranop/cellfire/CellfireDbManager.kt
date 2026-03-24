@@ -37,7 +37,8 @@ data class DbCell(
     val range: Int,
     val samples: Int,
     val conf: Int = 0,      // 0–100 confidence score computed server-side
-    val source: String = "" // source tag that earned this record its score
+    val source: String = "", // source tag that earned this record its score
+    val arfcn: Int = 0      // EARFCN/NR-ARFCN — enables TAC resolution for neighbor cells
 )
 
 object CellfireDbManager {
@@ -78,6 +79,12 @@ object CellfireDbManager {
 
     // pci -> best DbCell by sample count (for PCI-only lookups)
     private val pciCells = HashMap<Int, DbCell>()
+
+    // (pci, arfcn) -> best DbCell with a confirmed real TAC — lets neighbor cells
+    // resolve to the full record when TAC=0 but EARFCN is known.
+    // Same PCI + same EARFCN in the same tile = same physical cell, TAC=0 is a
+    // phone-side measurement limitation, not genuine ambiguity.
+    private val pciEarfcnMap = HashMap<Long, DbCell>()
 
     @Volatile private var lastCenterLat = Double.NaN
     @Volatile private var lastCenterLon = Double.NaN
@@ -158,6 +165,7 @@ object CellfireDbManager {
         tacLookup.clear()
         pciCarrierSets.clear()
         pciCells.clear()
+        pciEarfcnMap.clear()
         lastCenterLat = Double.NaN
         lastCenterLon = Double.NaN
     }
@@ -180,6 +188,24 @@ object CellfireDbManager {
     fun lookupByPciOnly(pci: Int): DbCell? {
         val carriers = pciCarrierSets[pci] ?: return null
         return if (carriers.size == 1) pciCells[pci] else null
+    }
+
+    /**
+     * EARFCN-based lookup for neighbor cells (TAC=0) that have a known EARFCN.
+     *
+     * Same PCI + same EARFCN in the same geographic tile = same physical cell.
+     * TAC=0 is a phone-side measurement limit, not real ambiguity. If another
+     * device has seen this cell as a serving cell, its confirmed (pci, tac, carrier)
+     * record will be in pciEarfcnMap and we can return it here with full confidence.
+     *
+     * Returns null if arfcn <= 0 or no confirmed real-TAC record is indexed.
+     */
+    fun lookupByPciEarfcn(pci: Int, arfcn: Int): DbCell? {
+        if (arfcn <= 0) return null
+        val result = pciEarfcnMap[packPciArfcnKey(pci, arfcn)]
+        Log.d(TAG, if (result != null) "DB EARFCN HIT pci=$pci arfcn=$arfcn → ${result.carrier} tac=${result.tac}"
+                   else                "DB EARFCN MISS pci=$pci arfcn=$arfcn")
+        return result
     }
 
     /**
@@ -223,6 +249,7 @@ object CellfireDbManager {
         tacLookup.clear()
         pciCarrierSets.clear()
         pciCells.clear()
+        pciEarfcnMap.clear()
         for (cachedTile in tileCache.values) {
             mergeCells(cachedTile.cells)
         }
@@ -230,23 +257,39 @@ object CellfireDbManager {
 
     private fun mergeCells(cells: List<DbCell>) {
         for (cell in cells) {
-            val key = packKey(cell.pci, cell.tac)
+            // 0xFFFF (65535) is a modem sentinel meaning "TAC unavailable" — treat as tac=0
+            val tac = if (cell.tac == 0xFFFF) 0 else cell.tac
+            val normalizedCell = if (tac != cell.tac) cell.copy(tac = tac) else cell
+
+            val key = packKey(normalizedCell.pci, normalizedCell.tac)
             val existing = lookup[key]
-            if (existing == null || cell.samples > existing.samples) {
-                lookup[key] = cell
+            if (existing == null || normalizedCell.samples > existing.samples) {
+                lookup[key] = normalizedCell
             }
-            if (cell.pci <= 0) {
-                val existingTac = tacLookup[cell.tac]
-                if (existingTac == null || cell.samples > existingTac.samples) {
-                    tacLookup[cell.tac] = cell
+            if (normalizedCell.pci <= 0 && normalizedCell.tac > 0) {
+                val existingTac = tacLookup[normalizedCell.tac]
+                if (existingTac == null || normalizedCell.samples > existingTac.samples) {
+                    tacLookup[normalizedCell.tac] = normalizedCell
                 }
             }
             // Track per-PCI carrier sets for ambiguity detection
-            if (cell.pci > 0 && cell.carrier.isNotBlank() && cell.carrier != "Unknown") {
-                pciCarrierSets.getOrPut(cell.pci) { mutableSetOf() }.add(cell.carrier)
-                val best = pciCells[cell.pci]
-                if (best == null || cell.samples > best.samples) {
-                    pciCells[cell.pci] = cell
+            if (normalizedCell.pci > 0 && normalizedCell.carrier.isNotBlank() && normalizedCell.carrier != "Unknown") {
+                pciCarrierSets.getOrPut(normalizedCell.pci) { mutableSetOf() }.add(normalizedCell.carrier)
+                val best = pciCells[normalizedCell.pci]
+                if (best == null || normalizedCell.samples > best.samples) {
+                    pciCells[normalizedCell.pci] = normalizedCell
+                }
+            }
+            // Index real-TAC records by (pci, arfcn) so neighbor lookups can resolve
+            // TAC=0 observations when the EARFCN is known. Only index records that have
+            // a confirmed real TAC and a known EARFCN — TAC=0 entries are never anchors.
+            if (normalizedCell.pci > 0 && normalizedCell.tac > 0 && normalizedCell.arfcn > 0 &&
+                normalizedCell.carrier.isNotBlank() && normalizedCell.carrier != "Unknown") {
+                val earfcnKey = packPciArfcnKey(normalizedCell.pci, normalizedCell.arfcn)
+                val bestEarfcn = pciEarfcnMap[earfcnKey]
+                if (bestEarfcn == null || normalizedCell.conf > bestEarfcn.conf ||
+                    (normalizedCell.conf == bestEarfcn.conf && normalizedCell.samples > bestEarfcn.samples)) {
+                    pciEarfcnMap[earfcnKey] = normalizedCell
                 }
             }
         }
@@ -306,4 +349,8 @@ object CellfireDbManager {
     }
 
     private fun packKey(pci: Int, tac: Int): Long = (pci.toLong() shl 32) or (tac.toLong() and 0xFFFFFFFFL)
+
+    // EARFCN values can exceed Int range for NR (up to ~3.3M), so keep full bits.
+    // pci is 0–503 (LTE) / 0–1007 (NR) — fits comfortably in the high 20 bits.
+    private fun packPciArfcnKey(pci: Int, arfcn: Int): Long = (pci.toLong() shl 32) or (arfcn.toLong() and 0xFFFFFFFFL)
 }
