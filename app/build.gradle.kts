@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -10,8 +12,9 @@ plugins {
 
 // ── Signing config — loaded from keystore.properties (never committed to git) ──
 val keystorePropsFile = file("C:\\cellfire_ks\\keystore.properties")
-val keystoreProps = java.util.Properties().apply {
-    if (keystorePropsFile.exists()) load(keystorePropsFile.inputStream())
+val keystoreProps = Properties()
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.inputStream().use { keystoreProps.load(it) }
 }
 
 android {
@@ -20,10 +23,10 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile     = file(keystoreProps["storeFile"] as String)
-            storePassword = keystoreProps["storePassword"] as String
-            keyAlias      = keystoreProps["keyAlias"] as String
-            keyPassword   = keystoreProps["keyPassword"] as String
+            storeFile     = file(keystoreProps.getProperty("storeFile") ?: "")
+            storePassword = keystoreProps.getProperty("storePassword") ?: ""
+            keyAlias      = keystoreProps.getProperty("keyAlias") ?: ""
+            keyPassword   = keystoreProps.getProperty("keyPassword") ?: ""
         }
     }
 
@@ -31,8 +34,8 @@ android {
         applicationId = "com.veteranop.cellfire"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "1.0.1.2"
+        versionCode = 13
+        versionName = "1.0.1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
