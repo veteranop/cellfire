@@ -22,8 +22,30 @@ import javax.inject.Inject
 @HiltViewModel
 class CellFireViewModel @Inject constructor(
     private val application: Application,
-    val cellRepository: CellRepository
+    val cellRepository: CellRepository,
+    private val authManager: CellfireAuthManager
 ) : ViewModel() {
+
+    // ─── Auth state (delegated to CellfireAuthManager) ────────────────────────
+    val authState: StateFlow<AuthState> = authManager.authState
+
+    init {
+        viewModelScope.launch { authManager.restoreSession() }
+    }
+
+    fun login(username: String, password: String) {
+        viewModelScope.launch { authManager.login(username, password) }
+    }
+
+    fun register(username: String, email: String, password: String) {
+        viewModelScope.launch { authManager.register(username, email, password) }
+    }
+
+    fun logout() = authManager.logout()
+
+    fun clearError() = authManager.clearError()
+
+    suspend fun getPortalUrl(): Result<String> = authManager.getPortalUrl()
 
     val uiState: StateFlow<CellFireUiState> = cellRepository.uiState
 

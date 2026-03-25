@@ -95,7 +95,8 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
                     val navController = rememberNavController()
                     val vm: CellFireViewModel = hiltViewModel()
-                    NavHost(navController = navController, startDestination = "start") {
+                    NavHost(navController = navController, startDestination = "splash") {
+                        composable("splash") { SplashScreen(navController, vm) }
                         composable("start") { StartScreen(navController, vm) }
                         composable("scan") { ScanScreen(navController, vm) }
                         composable("pci_discovery") { PciDiscoveryScreen(navController, viewModel = vm) }
@@ -131,6 +132,8 @@ class MainActivity : ComponentActivity() {
                             val pci = backStackEntry.arguments?.getInt("pci") ?: 0
                             PciMapScreen(navController, pci, vm)
                         }
+                        composable("login")   { AccountScreen(navController, vm) }
+                        composable("account") { AccountManagementScreen(navController, vm) }
                     }
                 }
             }
@@ -138,9 +141,49 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// ─── Splash / auth gate ───────────────────────────────────────────────────────
+@Composable
+fun SplashScreen(navController: NavController, vm: CellFireViewModel) {
+    val authState by vm.authState.collectAsState()
+
+    // Once auth state resolves, route accordingly — never let user past this without signing in
+    LaunchedEffect(authState) {
+        when (authState) {
+            is AuthState.Loading -> Unit // wait
+            is AuthState.LoggedIn -> navController.navigate("start") {
+                popUpTo("splash") { inclusive = true }
+            }
+            is AuthState.LoggedOut, is AuthState.Error -> navController.navigate("login") {
+                popUpTo("splash") { inclusive = true }
+            }
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Image(
+            painter = painterResource(id = R.drawable.cfbackground),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().alpha(0.4f)
+        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Image(painter = painterResource(id = R.drawable.app_name), contentDescription = "Cellfire")
+            Spacer(modifier = Modifier.height(32.dp))
+            CircularProgressIndicator(color = Color(0xFFFF8C00))
+        }
+    }
+}
+
 @Composable
 fun StartScreen(navController: NavController, vm: CellFireViewModel) {
     val state by vm.uiState.collectAsState()
+    val authState by vm.authState.collectAsState()
+
+    // Derive account button label from auth state
+    val accountLabel = when (val s = authState) {
+        is AuthState.LoggedIn -> "Account  ·  ${s.license.planLabel}"
+        else -> "Account / Sign In"
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Image(
@@ -170,6 +213,19 @@ fun StartScreen(navController: NavController, vm: CellFireViewModel) {
             Button(onClick = { navController.navigate("settings") }, modifier = Modifier.fillMaxWidth()) { Text("Settings") }
             Spacer(modifier = Modifier.height(8.dp))
             Button(onClick = { navController.navigate("about") }, modifier = Modifier.fillMaxWidth()) { Text("About") }
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = { navController.navigate("account") },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (authState is AuthState.LoggedIn) Color(0xFFFF8C00) else MaterialTheme.colorScheme.primary,
+                    contentColor = if (authState is AuthState.LoggedIn) Color.Black else Color.White
+                )
+            ) {
+                Icon(Icons.Default.AccountBox, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(accountLabel, maxLines = 1)
+            }
         }
     }
 }
