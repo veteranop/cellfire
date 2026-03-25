@@ -16,8 +16,8 @@ android {
         applicationId = "com.veteranop.cellfire"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.0.1.6_Stable"
+        versionCode = 8
+        versionName = "1.0.0.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -103,6 +103,9 @@ dependencies {
 
     // Accompanist
     implementation("com.google.accompanist:accompanist-swiperefresh:0.24.13-rc")
+
+    // Encrypted preferences (auth token storage)
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // Location
     implementation("com.google.android.gms:play-services-location:21.2.0")
