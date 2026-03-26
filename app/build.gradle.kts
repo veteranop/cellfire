@@ -34,8 +34,8 @@ android {
         applicationId = "com.veteranop.cellfire"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "1.0.1.3"
+        versionCode = 14
+        versionName = "1.0.1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -119,6 +119,7 @@ dependencies {
     implementation("com.google.firebase:firebase-analytics-ktx")
     implementation("com.google.firebase:firebase-database-ktx")
     implementation("com.google.firebase:firebase-crashlytics-ktx")
+    implementation("com.google.firebase:firebase-auth-ktx")
 
     // Accompanist
     implementation("com.google.accompanist:accompanist-swiperefresh:0.24.13-rc")
