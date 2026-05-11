@@ -361,9 +361,13 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                                     .clickable { navController.navigate("detail/${cell.pci}/${cell.arfcn}") }
                                     .padding(12.dp)
         ) {
-                                val rowMatchLevel = remember(cell.pci, cell.tac, cell.isRegistered) {
-                                    if (cell.isRegistered) DbMatchLevel.EXACT
-                                    else CellfireDbManager.lookupMatchLevel(cell.pci, cell.tac)
+                                val rowMatchLevel = remember(cell.pci, cell.tac, cell.isRegistered, cell.source) {
+                                    when {
+                                        cell.isRegistered -> DbMatchLevel.EXACT
+                                        cell.source == "exclusive_band" -> DbMatchLevel.HIGH_CONF
+                                        cell.source == "fcc_band" -> DbMatchLevel.HIGH_CONF
+                                        else -> CellfireDbManager.lookupMatchLevel(cell.pci, cell.tac)
+                                    }
                                 }
                                 val dotColor = when (rowMatchLevel) {
                                     DbMatchLevel.EXACT     -> Color(0xFF1B5E20)  // dark green — verified by registered user (conf=100)
@@ -451,9 +455,13 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Carrier: ${currentCell.carrier}", color = Color.White)
                         Spacer(modifier = Modifier.width(8.dp))
-                        val matchLevel = remember(currentCell.pci, currentCell.tac, currentCell.isRegistered) {
-                            if (currentCell.isRegistered) DbMatchLevel.EXACT
-                            else CellfireDbManager.lookupMatchLevel(currentCell.pci, currentCell.tac)
+                        val matchLevel = remember(currentCell.pci, currentCell.tac, currentCell.isRegistered, currentCell.source) {
+                            when {
+                                currentCell.isRegistered -> DbMatchLevel.EXACT
+                                currentCell.source == "exclusive_band" -> DbMatchLevel.HIGH_CONF
+                                currentCell.source == "fcc_band" -> DbMatchLevel.HIGH_CONF
+                                else -> CellfireDbManager.lookupMatchLevel(currentCell.pci, currentCell.tac)
+                            }
                         }
                         Text(
                             "●",
@@ -493,10 +501,11 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     Text("RSRQ: ${currentCell.rsrq}", color = Color.White)
                     Text("TAC: ${currentCell.tac}", color = Color.White)
                     Text("Registered: ${currentCell.isRegistered}", color = Color.White)
-                    if (currentCell is LteCell) {
-                        currentCell.taMeters?.let { m ->
-                            Text("TA: ${currentCell.timingAdvance}  (~${m}m / ${"%.2f".format(m / 1609.34)}mi)", color = Color(0xFFADD8E6))
-                        }
+                    if (currentCell is LteCell && currentCell.isRegistered) {
+                        val taDisplay = currentCell.taMeters
+                            ?.let { m -> "${currentCell.timingAdvance}  (~${m}m / ${"%.2f".format(m / 1609.34)}mi)" }
+                            ?: "not reported by device"
+                        Text("TA: $taDisplay", color = Color(0xFFADD8E6))
                     }
                     Text("Latitude: ${currentCell.latitude}", color = Color.White)
                     Text("Longitude: ${currentCell.longitude}", color = Color.White)
@@ -1322,6 +1331,9 @@ private data class ChangelogEntry(val tag: String, val text: String)
 private data class VersionLog(val version: String, val date: String, val entries: List<ChangelogEntry>)
 
 private val CHANGELOG = listOf(
+    VersionLog("1.0.1.14", "May 2026", listOf(
+        ChangelogEntry("FIX",    "Exclusive band cells (n71, B13, B14, n41, etc.) now show correct high-confidence green dot regardless of database score — band law is ground truth"),
+    )),
     VersionLog("1.0.1.13", "May 2026", listOf(
         ChangelogEntry("NEW",    "Timing Advance (TA) capture on serving cell — measures distance to your connected tower (~78m per unit)"),
         ChangelogEntry("NEW",    "TA distance shown in cell detail view (metres and miles)"),
