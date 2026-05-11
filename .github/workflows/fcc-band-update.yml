@@ -22,7 +22,8 @@ jobs:
 
       - name: Snapshot current JSON for diff
         run: |
-          cp app/src/main/assets/band_license_map.json /tmp/band_license_map.before.json
+          mkdir -p app/src/main/assets
+          cp app/src/main/assets/band_license_map.json /tmp/band_license_map.before.json 2>/dev/null || echo '{}' > /tmp/band_license_map.before.json
 
       - name: Download FCC bulk ZIPs
         run: |
