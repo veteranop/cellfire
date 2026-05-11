@@ -1,6 +1,7 @@
 package com.veteranop.cellfire
 
 import android.util.Log
+import com.google.firebase.auth.ktx.auth
 import com.google.firebase.database.ktx.database
 import com.google.firebase.ktx.Firebase
 import kotlin.math.abs
@@ -39,6 +40,27 @@ object CrowdsourceReporter {
     // Tracks best source quality already submitted for each (pci, tac) this session
     private val submittedQuality = HashMap<Long, Int>()
 
+    /**
+     * Ensures an anonymous Firebase Auth token exists before writing.
+     * Without a token the DB rules will reject the write once locked down.
+     * Sign-in is silent — no user interaction required.
+     */
+    private fun ensureAuth(onReady: () -> Unit) {
+        if (Firebase.auth.currentUser != null) {
+            onReady()
+            return
+        }
+        Firebase.auth.signInAnonymously()
+            .addOnSuccessListener {
+                Log.d(TAG, "Anonymous auth OK uid=${it.user?.uid}")
+                onReady()
+            }
+            .addOnFailureListener { e ->
+                Log.w(TAG, "Anonymous auth failed — observation dropped: ${e.message}")
+                // Do not proceed: once rules are locked the write would be rejected anyway
+            }
+    }
+
     fun submit(
         pci: Int,
         tac: Int,
@@ -49,7 +71,9 @@ object CrowdsourceReporter {
         arfcn: Int,
         band: String,
         source: String,
-        state: String = ""
+        state: String = "",
+        ci: Long = 0L,
+        ta: Int = -1
     ) {
         if (lat == 0.0 && lon == 0.0) return
         if (pci <= 0) return
@@ -68,7 +92,7 @@ object CrowdsourceReporter {
         submittedQuality[key] = newQuality
 
         val tileKey = tileFilename(lat, lon)
-        val observation = mapOf(
+        val observation = mutableMapOf<String, Any>(
             "pci"       to pci,
             "tac"       to tac,
             "carrier"   to carrier,
@@ -82,22 +106,26 @@ object CrowdsourceReporter {
             "timestamp" to System.currentTimeMillis(),
             "processed" to false
         )
+        if (ci > 0L) observation["ci"] = ci
+        if (ta in 0..1282) observation["ta"] = ta
 
         // Use pci_tac as the node key so the same cell always overwrites itself — no duplicates.
         val nodeKey = "${pci}_${tac}"
         Log.d(TAG, "Submitting PCI=$pci TAC=$tac carrier=$carrier source=$source tile=$tileKey")
-        db.getReference("observations/$tileKey/$nodeKey")
-            .setValue(observation)
-            .addOnSuccessListener {
-                Log.d(TAG, "SUCCESS PCI=$pci TAC=$tac → $tileKey/$nodeKey")
-            }
-            .addOnFailureListener { e ->
-                Log.w(TAG, "FAILED PCI=$pci TAC=$tac: ${e.message}")
-                // Roll back so it can retry with same or better source
-                if ((submittedQuality[key] ?: -1) == newQuality) {
-                    submittedQuality[key] = existingQuality
+        ensureAuth {
+            db.getReference("observations/$tileKey/$nodeKey")
+                .setValue(observation)
+                .addOnSuccessListener {
+                    Log.d(TAG, "SUCCESS PCI=$pci TAC=$tac → $tileKey/$nodeKey")
                 }
-            }
+                .addOnFailureListener { e ->
+                    Log.w(TAG, "FAILED PCI=$pci TAC=$tac: ${e.message}")
+                    // Roll back so it can retry with same or better source
+                    if ((submittedQuality[key] ?: -1) == newQuality) {
+                        submittedQuality[key] = existingQuality
+                    }
+                }
+        }
     }
 
     /**
@@ -107,25 +135,28 @@ object CrowdsourceReporter {
     fun submitBulk(
         pci: Int, tac: Int, carrier: String, mnc: String,
         lat: Double, lon: Double, arfcn: Int, band: String, source: String,
-        state: String = ""
+        state: String = "", ci: Long = 0L
     ) {
         if (lat == 0.0 && lon == 0.0) return
         if (pci <= 0) return
         if (tac >= 0xFFFF) return
 
         val tileKey = tileFilename(lat, lon)
-        val observation = mapOf(
+        val observation = mutableMapOf<String, Any>(
             "pci" to pci, "tac" to tac, "carrier" to carrier, "mnc" to mnc,
             "lat" to lat, "lon" to lon, "arfcn" to arfcn, "band" to band,
             "source" to source, "state" to state,
             "timestamp" to System.currentTimeMillis(), "processed" to false
         )
+        if (ci > 0L) observation["ci"] = ci
 
         val nodeKey = "${pci}_${tac}"
         Log.d(TAG, "Bulk submit PCI=$pci TAC=$tac carrier=$carrier tile=$tileKey/$nodeKey")
-        db.getReference("observations/$tileKey/$nodeKey").setValue(observation)
-            .addOnSuccessListener { Log.d(TAG, "Bulk SUCCESS PCI=$pci TAC=$tac") }
-            .addOnFailureListener { e -> Log.w(TAG, "Bulk FAILED PCI=$pci: ${e.message}") }
+        ensureAuth {
+            db.getReference("observations/$tileKey/$nodeKey").setValue(observation)
+                .addOnSuccessListener { Log.d(TAG, "Bulk SUCCESS PCI=$pci TAC=$tac") }
+                .addOnFailureListener { e -> Log.w(TAG, "Bulk FAILED PCI=$pci: ${e.message}") }
+        }
     }
 
     private fun tileFilename(lat: Double, lon: Double): String {

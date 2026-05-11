@@ -161,13 +161,13 @@ fun SplashScreen(navController: NavController, vm: CellFireViewModel) {
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Image(
-            painter = painterResource(id = R.drawable.cfbackground),
+            painter = painterResource(id = R.drawable.bg2),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize().alpha(0.4f)
         )
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Image(painter = painterResource(id = R.drawable.app_name), contentDescription = "Cellfire")
+            Image(painter = painterResource(id = R.drawable.app_name_2), contentDescription = "Cellfire")
             Spacer(modifier = Modifier.height(32.dp))
             CircularProgressIndicator(color = Color(0xFFFF8C00))
         }
@@ -187,7 +187,7 @@ fun StartScreen(navController: NavController, vm: CellFireViewModel) {
 
     Box(modifier = Modifier.fillMaxSize()) {
         Image(
-            painter = painterResource(id = R.drawable.cfbackground),
+            painter = painterResource(id = R.drawable.bg2),
             contentDescription = "background",
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize().alpha(0.4f)
@@ -197,7 +197,7 @@ fun StartScreen(navController: NavController, vm: CellFireViewModel) {
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Image(painter = painterResource(id = R.drawable.app_name), contentDescription = "app logo")
+            Image(painter = painterResource(id = R.drawable.app_name_2), contentDescription = "app logo")
             Text(BuildConfig.VERSION_NAME, style = MaterialTheme.typography.bodyLarge, color = Color.White)
             Spacer(modifier = Modifier.height(32.dp))
             Button(onClick = { navController.navigate("scan") }, modifier = Modifier.fillMaxWidth()) { Text("Start Scan") }
@@ -260,13 +260,13 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize()) {
             Image(
-                painter = painterResource(id = R.drawable.cfbackground),
+                painter = painterResource(id = R.drawable.bg2),
                 contentDescription = "background",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize().alpha(0.4f)
             )
             Column(modifier = Modifier.padding(innerPadding).padding(16.dp)) {
-                Image(painter = painterResource(id = R.drawable.app_name), contentDescription = "app logo", modifier = Modifier.padding(bottom = 16.dp))
+                Image(painter = painterResource(id = R.drawable.app_name_2), contentDescription = "app logo", modifier = Modifier.padding(bottom = 16.dp))
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     ElevatedButton(
@@ -359,8 +359,9 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                                     .clickable { navController.navigate("detail/${cell.pci}/${cell.arfcn}") }
                                     .padding(12.dp)
         ) {
-                                val rowMatchLevel = remember(cell.pci, cell.tac) {
-                                    CellfireDbManager.lookupMatchLevel(cell.pci, cell.tac)
+                                val rowMatchLevel = remember(cell.pci, cell.tac, cell.isRegistered) {
+                                    if (cell.isRegistered) DbMatchLevel.EXACT
+                                    else CellfireDbManager.lookupMatchLevel(cell.pci, cell.tac)
                                 }
                                 val dotColor = when (rowMatchLevel) {
                                     DbMatchLevel.EXACT     -> Color(0xFF1B5E20)  // dark green — verified by registered user (conf=100)
@@ -422,7 +423,7 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
     var selectedCarrier by remember(currentCell) { mutableStateOf(currentCell.carrier) }
         Box(modifier = Modifier.fillMaxSize()) {
             Image(
-                painter = painterResource(id = R.drawable.cfbackground),
+                painter = painterResource(id = R.drawable.bg2),
                 contentDescription = "background",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize().alpha(0.4f)
@@ -448,8 +449,9 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Carrier: ${currentCell.carrier}", color = Color.White)
                         Spacer(modifier = Modifier.width(8.dp))
-                        val matchLevel = remember(currentCell.pci, currentCell.tac) {
-                            CellfireDbManager.lookupMatchLevel(currentCell.pci, currentCell.tac)
+                        val matchLevel = remember(currentCell.pci, currentCell.tac, currentCell.isRegistered) {
+                            if (currentCell.isRegistered) DbMatchLevel.EXACT
+                            else CellfireDbManager.lookupMatchLevel(currentCell.pci, currentCell.tac)
                         }
                         Text(
                             "●",
@@ -489,6 +491,11 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     Text("RSRQ: ${currentCell.rsrq}", color = Color.White)
                     Text("TAC: ${currentCell.tac}", color = Color.White)
                     Text("Registered: ${currentCell.isRegistered}", color = Color.White)
+                    if (currentCell is LteCell) {
+                        currentCell.taMeters?.let { m ->
+                            Text("TA: ${currentCell.timingAdvance}  (~${m}m / ${"%.2f".format(m / 1609.34)}mi)", color = Color(0xFFADD8E6))
+                        }
+                    }
                     Text("Latitude: ${currentCell.latitude}", color = Color.White)
                     Text("Longitude: ${currentCell.longitude}", color = Color.White)
                     val freq = when (currentCell) {
@@ -673,7 +680,7 @@ fun RawLogScreen(vm: CellFireViewModel) {
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize()) {
             Image(
-                painter = painterResource(id = R.drawable.cfbackground),
+                painter = painterResource(id = R.drawable.bg2),
                 contentDescription = "background",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize().alpha(0.4f)
@@ -726,7 +733,7 @@ fun PciTableScreen(navController: NavController, vm: CellFireViewModel) {
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize()) {
             Image(
-                painter = painterResource(id = R.drawable.cfbackground),
+                painter = painterResource(id = R.drawable.bg2),
                 contentDescription = "background",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize().alpha(0.4f)
@@ -808,7 +815,7 @@ fun PciCarrierListScreen(navController: NavController, vm: CellFireViewModel, ca
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize()) {
             Image(
-                painter = painterResource(id = R.drawable.cfbackground),
+                painter = painterResource(id = R.drawable.bg2),
                 contentDescription = "background",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize().alpha(0.4f)
@@ -856,6 +863,7 @@ fun PciCarrierListScreen(navController: NavController, vm: CellFireViewModel, ca
 }
 
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(vm: CellFireViewModel) {
     val context = LocalContext.current
@@ -864,16 +872,22 @@ fun SettingsScreen(vm: CellFireViewModel) {
         mutableStateOf(sharedPreferences.getBoolean(CROWDSOURCE_ENABLED_KEY, true))
     }
     var lastSynced by remember { mutableStateOf(sharedPreferences.getLong(LAST_SYNC_KEY, 0L)) }
-    var isSyncing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val fusedLocation = remember { LocationServices.getFusedLocationProviderClient(context) }
 
+    Scaffold(
+        containerColor = Color.Transparent,
+        topBar = {
+            TopAppBar(
+                title = { Text("Settings", color = Color.White) },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+            )
+        }
+    ) { innerPadding ->
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.Top
     ) {
-        Text("Settings", style = MaterialTheme.typography.headlineLarge, color = Color.White)
-        Spacer(modifier = Modifier.height(24.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -888,124 +902,84 @@ fun SettingsScreen(vm: CellFireViewModel) {
                 }
             )
         }
+
         Spacer(modifier = Modifier.height(16.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column {
-                Text("Cell database", color = Color.White)
-                Text(
-                    if (lastSynced > 0L)
-                        "Last synced: ${SimpleDateFormat("MMM d, h:mm a", Locale.US).format(Date(lastSynced))}"
-                    else
-                        "Never synced",
-                    color = Color.Gray,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-            Button(
-                onClick = {
-                    CellfireAnalytics.dbSyncRequested()
-                    scope.launch {
-                        isSyncing = true
-                        CellfireDbManager.clearCache()
-                        try {
-                            val loc = suspendCancellableCoroutine { cont ->
-                                fusedLocation.lastLocation
-                                    .addOnSuccessListener { cont.resume(it) }
-                                    .addOnFailureListener { cont.resume(null) }
-                            }
-                            if (loc != null) {
-                                CellfireDbManager.refreshTiles(loc.latitude, loc.longitude)
-                                val now = System.currentTimeMillis()
-                                sharedPreferences.edit().putLong(LAST_SYNC_KEY, now).apply()
-                                lastSynced = now
-                            }
-                        } finally {
-                            isSyncing = false
-                        }
-                    }
-                },
-                enabled = !isSyncing
-            ) {
-                Text(if (isSyncing) "Syncing..." else "Sync DB")
-            }
-        }
 
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Upload Discovered PCIs
-        var isUploading by remember { mutableStateOf(false) }
-        var uploadResult by remember { mutableStateOf("") }
+        // ── Upgrade CellDB — combined: sync tiles + upload PCIs + update signal rules ──
+        var isUpgrading by remember { mutableStateOf(false) }
+        var upgradeStatus by remember { mutableStateOf(
+            if (lastSynced > 0L) "Last: ${SimpleDateFormat("MMM d, h:mm a", Locale.US).format(Date(lastSynced))}"
+            else "Never synced"
+        ) }
         val discoveredPcis = vm.uiState.collectAsState().value.discoveredPcis
         val validCount = discoveredPcis.count { it.tac > 0 }
-
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Upload discovered PCIs", color = Color.White)
-                Text(
-                    "$validCount with valid TAC ready to upload" +
-                        if (uploadResult.isNotEmpty()) "\n$uploadResult" else "",
-                    color = Color.Gray,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-            Button(
-                onClick = {
-                    CellfireAnalytics.pciUploadRequested(validCount)
-                    isUploading = true
-                    uploadResult = ""
-                    vm.uploadDiscovered { uploaded, skipped ->
-                        isUploading = false
-                        uploadResult = "Sent $uploaded" + if (skipped > 0) ", $skipped skipped (no GPS)" else ""
-                        CellfireAnalytics.pciUploadCompleted(uploaded, skipped)
-                    }
-                },
-                enabled = !isUploading && validCount > 0
-            ) {
-                Text(if (isUploading) "Uploading..." else "Upload")
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Signal Rules
         var rulesVersion by remember { mutableStateOf(CarrierResolver.currentVersion()) }
-        var rulesUpdating by remember { mutableStateOf(false) }
-        var rulesStatus by remember { mutableStateOf("") }
 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Signal Rules", color = Color.White)
+                Text("Upgrade CellDB", color = Color.White, fontWeight = FontWeight.Bold)
                 Text(
-                    rulesVersion + if (rulesStatus.isNotEmpty()) " · $rulesStatus" else "",
+                    "Rules: $rulesVersion · PCIs: $validCount ready",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    upgradeStatus,
                     color = Color.Gray,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
-            if (rulesUpdating) {
-                CircularProgressIndicator(modifier = Modifier.padding(8.dp))
+            if (isUpgrading) {
+                CircularProgressIndicator(modifier = Modifier.padding(8.dp), color = Color(0xFFFF8C00))
             } else {
-                Button(onClick = {
-                    CellfireAnalytics.signalRulesUpdateRequested()
-                    rulesUpdating = true
-                    rulesStatus = ""
-                    scope.launch {
-                        val newVersion = CarrierResolver.fetchUpdate()
-                        rulesUpdating = false
-                        if (newVersion != null) {
-                            rulesVersion = newVersion
-                            rulesStatus = "Updated"
-                            CellfireAnalytics.signalRulesUpdated(newVersion, true)
-                        } else {
-                            rulesStatus = "Failed"
-                            CellfireAnalytics.signalRulesUpdated(rulesVersion, false)
+                Button(
+                    onClick = {
+                        isUpgrading = true
+                        upgradeStatus = "Syncing tiles..."
+                        scope.launch {
+                            // 1. Sync cell DB tiles
+                            CellfireAnalytics.dbSyncRequested()
+                            CellfireDbManager.clearCache()
+                            try {
+                                val loc = suspendCancellableCoroutine { cont ->
+                                    fusedLocation.lastLocation
+                                        .addOnSuccessListener { cont.resume(it) }
+                                        .addOnFailureListener { cont.resume(null) }
+                                }
+                                if (loc != null) {
+                                    CellfireDbManager.refreshTiles(loc.latitude, loc.longitude)
+                                    val now = System.currentTimeMillis()
+                                    sharedPreferences.edit().putLong(LAST_SYNC_KEY, now).apply()
+                                    lastSynced = now
+                                }
+                            } catch (_: Exception) { }
+
+                            // 2. Upload discovered PCIs
+                            upgradeStatus = "Uploading PCIs..."
+                            CellfireAnalytics.pciUploadRequested(validCount)
+                            val (uploaded, skipped) = vm.cellRepository.uploadDiscoveredPcis()
+                            CellfireAnalytics.pciUploadCompleted(uploaded, skipped)
+
+                            // 3. Update signal rules
+                            upgradeStatus = "Updating rules..."
+                            CellfireAnalytics.signalRulesUpdateRequested()
+                            val newVersion = CarrierResolver.fetchUpdate()
+                            if (newVersion != null) {
+                                rulesVersion = newVersion
+                                CellfireAnalytics.signalRulesUpdated(newVersion, true)
+                            } else {
+                                CellfireAnalytics.signalRulesUpdated(rulesVersion, false)
+                            }
+
+                            // Done
+                            isUpgrading = false
+                            val uploadMsg = "Sent $uploaded" + if (skipped > 0) ", $skipped skipped" else ""
+                            upgradeStatus = "Done · $uploadMsg · Rules: $rulesVersion"
                         }
-                    }
-                }) {
-                    Text("Update")
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF8C00), contentColor = Color.Black)
+                ) {
+                    Text("Upgrade", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -1115,15 +1089,26 @@ fun SettingsScreen(vm: CellFireViewModel) {
             }
         }
     }
+    }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutScreen() {
+    Scaffold(
+        containerColor = Color.Black,
+        topBar = {
+            TopAppBar(
+                title = { Text("About", color = Color.White) },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+            )
+        }
+    ) { innerPadding ->
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
-            .padding(16.dp),
+            .padding(innerPadding)
+            .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
@@ -1305,5 +1290,6 @@ fun AboutScreen() {
         item {
             Text("cellfire.io", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
         }
+    }
     }
 }

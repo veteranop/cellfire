@@ -43,6 +43,7 @@ sealed class Cell {
     abstract val fromDb: Boolean
     abstract val mnc: String       // MNC string as reported by TM (empty if unknown)
     abstract val source: String    // "alpha", "plmn", "fcc_band", "db", "pci_range", ""
+    abstract val ci: Long          // E-UTRAN Cell Identity (LTE) or NR Cell Identity (NR); 0 if unknown
 }
 
 data class LteCell(
@@ -63,9 +64,13 @@ data class LteCell(
     override val longitude: Double,
     override val fromDb: Boolean = false,
     override val mnc: String = "",
-    override val source: String = ""
+    override val source: String = "",
+    override val ci: Long = 0L,    // 28-bit E-UTRAN Cell Identity; 0 if modem didn't report it
+    val timingAdvance: Int = -1    // LTE TA units (0–1282); -1 = unavailable. Only valid on serving cell. 1 unit ≈ 78m.
 ) : Cell() {
     override val type: String = "LTE"
+    /** Distance to serving tower in metres derived from TA, or null if unavailable. */
+    val taMeters: Int? get() = if (timingAdvance in 0..1282) (timingAdvance * 78.125).toInt() else null
 }
 
 data class NrCell(
@@ -86,7 +91,8 @@ data class NrCell(
     override val longitude: Double,
     override val fromDb: Boolean = false,
     override val mnc: String = "",
-    override val source: String = ""
+    override val source: String = "",
+    override val ci: Long = 0L     // 36-bit NR Cell Identity; 0 if modem didn't report it
 ) : Cell() {
     override val type: String = "5G NR"
 }
@@ -109,7 +115,8 @@ data class WcdmaCell(
     override val longitude: Double,
     override val fromDb: Boolean = false,
     override val mnc: String = "",
-    override val source: String = ""
+    override val source: String = "",
+    override val ci: Long = 0L
 ) : Cell() {
     override val type: String = "WCDMA"
 }
@@ -132,7 +139,8 @@ data class GsmCell(
     override val longitude: Double,
     override val fromDb: Boolean = false,
     override val mnc: String = "",
-    override val source: String = ""
+    override val source: String = "",
+    override val ci: Long = 0L
 ) : Cell() {
     override val type: String = "GSM"
 }
@@ -153,7 +161,8 @@ data class DiscoveredPci(
     var mnc: String = "",
     var bestLat: Double = 0.0,
     var bestLon: Double = 0.0,
-    var source: String = ""   // best source quality seen: alpha > plmn > fcc_band > db > pci_range
+    var source: String = "",  // best source quality seen: alpha > plmn > fcc_band > db > pci_range
+    var ci: Long = 0L         // E-UTRAN / NR Cell Identity — used for OCID tower location lookup
 )
 
 @Entity(tableName = "drive_test_points")

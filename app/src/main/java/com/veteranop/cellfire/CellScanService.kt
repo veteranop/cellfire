@@ -349,6 +349,7 @@ class CellScanService : LifecycleService() {
 
                 val pci = if (identity.pci == Int.MAX_VALUE) 0 else identity.pci
                 val tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac
+                val ci  = if (identity.ci  == Int.MAX_VALUE) 0L else identity.ci.toLong()
                 // EARFCN lookup only when carrier is already confirmed (alpha/plmn) —
                 // neighbor cells inherit the modem's serving EARFCN and it's unreliable.
                 // Unconfirmed cells fall through to lookupByPciOnly instead.
@@ -393,6 +394,8 @@ class CellScanService : LifecycleService() {
                     }
                 }
 
+                val ta = strength.timingAdvance.let { if (it != Int.MAX_VALUE) it else -1 }
+
                 // Submit every discovered cell — CrowdsourceReporter filters by quality and deduplicates
                 val crowdsourceEnabled = getSharedPreferences("CellFirePrefs", android.content.Context.MODE_PRIVATE)
                     .getBoolean("crowdsource_enabled", true)
@@ -407,7 +410,9 @@ class CellScanService : LifecycleService() {
                         arfcn = identity.earfcn,
                         band = earfcnToLteBand(identity.earfcn),
                         source = crowdsourceSource,
-                        state = currentState
+                        state = currentState,
+                        ci = ci,
+                        ta = if (info.isRegistered) ta else -1
                     )
                 }
 
@@ -433,7 +438,9 @@ class CellScanService : LifecycleService() {
                     longitude = lastLongitude,
                     fromDb = dbResult != null,
                     mnc = confirmedMnc,
-                    source = crowdsourceSource
+                    source = crowdsourceSource,
+                    ci = ci,
+                    timingAdvance = if (info.isRegistered) ta else -1
                 )
             }
             else -> {
@@ -460,6 +467,7 @@ class CellScanService : LifecycleService() {
 
                     val pci = if (identity.pci == Int.MAX_VALUE) 0 else identity.pci
                     val tac = if (identity.tac == Int.MAX_VALUE) 0 else identity.tac
+                    val ci  = if (identity.nci == Long.MAX_VALUE) 0L else identity.nci
 
                     // Only use NR-ARFCN lookup when carrier is already confirmed —
                     // neighbor cell ARFCNs are unreliable (modem copies serving ARFCN).
@@ -518,7 +526,8 @@ class CellScanService : LifecycleService() {
                             arfcn = identity.nrarfcn,
                             band = nrarfcnToNrBand(identity.nrarfcn),
                             source = crowdsourceSource,
-                            state = currentState
+                            state = currentState,
+                            ci = ci
                         )
                     }
 
@@ -545,7 +554,8 @@ class CellScanService : LifecycleService() {
                         longitude = lastLongitude,
                         fromDb = dbResult != null,
                         mnc = confirmedMnc,
-                        source = crowdsourceSource
+                        source = crowdsourceSource,
+                        ci = ci
                     )
                 } else if (info is CellInfoWcdma) {
                     val identity = info.cellIdentity
