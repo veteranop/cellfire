@@ -1,9 +1,7 @@
 name: Update FCC Band License Map
 
 on:
-  schedule:
-    - cron: '0 6 * * 1'   # Every Monday at 6 AM UTC
-  workflow_dispatch:        # Allow manual trigger from GitHub UI
+  workflow_dispatch:        # Triggered by server cron or manually from GitHub UI
 
 jobs:
   update-band-map:
@@ -22,7 +20,8 @@ jobs:
 
       - name: Snapshot current JSON for diff
         run: |
-          cp app/src/main/assets/band_license_map.json /tmp/band_license_map.before.json
+          mkdir -p app/src/main/assets
+          cp app/src/main/assets/band_license_map.json /tmp/band_license_map.before.json 2>/dev/null || echo '{}' > /tmp/band_license_map.before.json
 
       - name: Download FCC bulk ZIPs
         run: |
@@ -123,6 +122,61 @@ jobs:
         run: |
           rm -f l_cell.zip l_market.zip
           echo "ZIPs removed"
+
+      - name: Post Slack notification
+        if: always()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        run: |
+          python - << 'EOF'
+          import json, urllib.request, os, sys
+
+          webhook = os.environ.get("SLACK_WEBHOOK", "")
+          if not webhook:
+              print("No SLACK_WEBHOOK configured, skipping")
+              sys.exit(0)
+
+          changed = "${{ steps.diff.outputs.changed }}" == "true"
+          run_url = "https://github.com/veteranop/cellfire/actions/workflows/fcc-band-update.yml"
+
+          if changed:
+              try:
+                  with open("/tmp/band_license_map.before.json") as f:
+                      before = json.load(f)
+                  with open("app/src/main/assets/band_license_map.json") as f:
+                      after = json.load(f)
+
+                  added   = sorted(set(after) - set(before))
+                  removed = sorted(set(before) - set(after))
+                  updated = sorted(s for s in set(after) & set(before) if after[s] != before[s])
+
+                  lines = []
+                  if added:
+                      lines.append(f"• New states added: {', '.join(added)}")
+                  if removed:
+                      lines.append(f"• States removed: {', '.join(removed)}")
+                  if updated:
+                      preview = ", ".join(updated[:12]) + ("…" if len(updated) > 12 else "")
+                      lines.append(f"• {len(updated)} state(s) updated: {preview}")
+
+                  detail = "\n".join(lines) if lines else "• Data refreshed (structure unchanged)"
+              except Exception as e:
+                  detail = f"• Changes detected (diff parse error: {e})"
+
+              msg = {
+                  "text": f":satellite: *FCC Band License Map Updated*\n{detail}\n<{run_url}|View workflow run>"
+              }
+          else:
+              msg = {
+                  "text": f":white_check_mark: *FCC Band Update* — No FCC changes detected this week. Map is current.\n<{run_url}|View workflow run>"
+              }
+
+          data = json.dumps(msg).encode()
+          req  = urllib.request.Request(webhook, data=data, method="POST")
+          req.add_header("Content-Type", "application/json")
+          with urllib.request.urlopen(req) as r:
+              print(f"Slack notification sent: HTTP {r.status}")
+          EOF
 
       - name: Summary
         run: |
