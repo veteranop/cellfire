@@ -1,0 +1,133 @@
+name: Update FCC Band License Map
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Every Monday at 6 AM UTC
+  workflow_dispatch:        # Allow manual trigger from GitHub UI
+
+jobs:
+  update-band-map:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Snapshot current JSON for diff
+        run: |
+          cp app/src/main/assets/band_license_map.json /tmp/band_license_map.before.json
+
+      - name: Download FCC bulk ZIPs
+        run: |
+          mkdir -p .fcc_cache
+          echo "Downloading l_cell.zip..."
+          curl -fsSL --max-time 300 \
+            "https://data.fcc.gov/download/pub/uls/complete/l_cell.zip" \
+            -o l_cell.zip
+          echo "Downloading l_market.zip..."
+          curl -fsSL --max-time 600 \
+            "https://data.fcc.gov/download/pub/uls/complete/l_market.zip" \
+            -o l_market.zip
+
+      - name: Download FCC auction CSVs
+        run: |
+          echo "Auction 107 (C-Band)..."
+          curl -fsSL --max-time 60 \
+            "https://auctiondata.fcc.gov/public/projects/auction107/reports/results_by_license/download" \
+            -o .fcc_cache/a107_results.csv
+
+          echo "Auction 108 (2.5 GHz)..."
+          curl -fsSL --max-time 60 \
+            "https://auctiondata.fcc.gov/public/projects/auction108/reports/results_by_license/download" \
+            -o .fcc_cache/a108_results.csv
+
+          echo "Auction 110 (3.45 GHz)..."
+          curl -fsSL --max-time 60 \
+            "https://auctiondata.fcc.gov/public/projects/auction110/reports/results_by_license/download" \
+            -o .fcc_cache/a110_results.csv
+
+      - name: Run band license map builder
+        run: python build_band_license_map.py --local-cell l_cell.zip --local-market l_market.zip
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if diff -q /tmp/band_license_map.before.json \
+              app/src/main/assets/band_license_map.json > /dev/null 2>&1; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No changes to band_license_map.json"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "band_license_map.json has changed"
+            diff /tmp/band_license_map.before.json \
+              app/src/main/assets/band_license_map.json | head -40 || true
+          fi
+
+      - name: Commit and push updated JSON
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/assets/band_license_map.json
+          git commit -m "chore: update band_license_map.json from FCC weekly data [skip ci]"
+          git push
+
+      - name: Push to cellfire.io via cPanel
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          CPANEL_TOKEN: ${{ secrets.CPANEL_TOKEN }}
+        run: |
+          python - << 'EOF'
+          import json, urllib.request, urllib.parse, os
+
+          CPANEL_HOST = "just2029.justhost.com"
+          CPANEL_PORT = 2083
+          CPANEL_USER = "veterap2"
+          SERVER_DIR  = "/home1/veterap2/public_html/website_9695cd55/files/cellfire-db"
+          API_TOKEN   = os.environ["CPANEL_TOKEN"]
+
+          fname = "band_license_map.json"
+          with open(f"app/src/main/assets/{fname}", encoding="utf-8") as f:
+              content = f.read()
+
+          url  = f"https://{CPANEL_HOST}:{CPANEL_PORT}/execute/Fileman/save_file_content"
+          data = urllib.parse.urlencode({
+              "dir":        SERVER_DIR,
+              "filename":   fname,
+              "content":    content,
+              "from_charset": "UTF-8",
+              "to_charset":   "UTF-8",
+          }).encode("utf-8")
+
+          req = urllib.request.Request(url, data=data, method="POST")
+          req.add_header("Authorization", f"cpanel {CPANEL_USER}:{API_TOKEN}")
+
+          with urllib.request.urlopen(req) as r:
+              result = json.loads(r.read())
+          if result.get("status") == 1:
+              print(f"Pushed {fname} to cellfire.io")
+          else:
+              print(f"Push failed: {result}")
+              exit(1)
+          EOF
+
+      - name: Clean up large ZIPs
+        if: always()
+        run: |
+          rm -f l_cell.zip l_market.zip
+          echo "ZIPs removed"
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.diff.outputs.changed }}" == "true" ]; then
+            echo "band_license_map.json was updated and pushed to cellfire.io"
+          else
+            echo "No FCC changes detected this week — nothing to push"
+          fi
