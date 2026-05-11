@@ -501,11 +501,16 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     Text("RSRQ: ${currentCell.rsrq}", color = Color.White)
                     Text("TAC: ${currentCell.tac}", color = Color.White)
                     Text("Registered: ${currentCell.isRegistered}", color = Color.White)
-                    if (currentCell is LteCell && currentCell.isRegistered) {
-                        val taDisplay = currentCell.taMeters
-                            ?.let { m -> "${currentCell.timingAdvance}  (~${m}m / ${"%.2f".format(m / 1609.34)}mi)" }
-                            ?: "not reported by device"
-                        Text("TA: $taDisplay", color = Color(0xFFADD8E6))
+                    if (currentCell.isRegistered) {
+                        val taDisplay = when (val c = currentCell) {
+                            is LteCell -> c.taMeters
+                                ?.let { m -> "${c.timingAdvance}  (~${m}m / ${"%.2f".format(m / 1609.34)}mi)" }
+                                ?: "not reported by device"
+                            is NrCell  -> "N/A (5G NR — not exposed by Android)"
+                            else       -> null
+                        }
+                        if (taDisplay != null)
+                            Text("TA: $taDisplay", color = Color(0xFFADD8E6))
                     }
                     Text("Latitude: ${currentCell.latitude}", color = Color.White)
                     Text("Longitude: ${currentCell.longitude}", color = Color.White)
