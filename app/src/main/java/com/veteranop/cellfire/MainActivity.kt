@@ -39,6 +39,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -1036,6 +1038,26 @@ fun SettingsScreen(vm: CellFireViewModel) {
             }
         }
 
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // What's New
+        var showChangelog by remember { mutableStateOf(false) }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("What's New", color = Color.White)
+                Text("Release notes and changelog", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+            }
+            Button(onClick = { showChangelog = true }) { Text("View") }
+        }
+        if (showChangelog) {
+            Dialog(
+                onDismissRequest = { showChangelog = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                ChangelogDialog(onDismiss = { showChangelog = false })
+            }
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
 
         // Clear All Data
@@ -1291,5 +1313,114 @@ fun AboutScreen() {
             Text("cellfire.io", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
         }
     }
+    }
+}
+
+// ── Changelog ────────────────────────────────────────────────────────────────
+
+private data class ChangelogEntry(val tag: String, val text: String)
+private data class VersionLog(val version: String, val date: String, val entries: List<ChangelogEntry>)
+
+private val CHANGELOG = listOf(
+    VersionLog("1.0.1.13", "May 2026", listOf(
+        ChangelogEntry("NEW",    "Timing Advance (TA) capture on serving cell — measures distance to your connected tower (~78m per unit)"),
+        ChangelogEntry("NEW",    "TA distance shown in cell detail view (metres and miles)"),
+        ChangelogEntry("NEW",    "TA included in crowd observations to build future tower location database"),
+        ChangelogEntry("NEW",    "What's New screen"),
+    )),
+    VersionLog("1.0.1.12", "May 2026", listOf(
+        ChangelogEntry("FIX",    "Registered (serving) cell now always shows dark green verified dot — modem registration is ground truth regardless of database score"),
+    )),
+    VersionLog("1.0.1.11", "May 2026", listOf(
+        ChangelogEntry("UPDATE", "App name graphic updated to transparent PNG — displays cleanly over any background"),
+    )),
+    VersionLog("1.0.1.10", "May 2026", listOf(
+        ChangelogEntry("UPDATE", "New launcher icon, background, and app name graphic"),
+    )),
+    VersionLog("1.0.1.9", "Mar 2026", listOf(
+        ChangelogEntry("NEW",    "Cellfire account system — create an account to register observations to your device"),
+        ChangelogEntry("NEW",    "Account screen with plan status and session info"),
+        ChangelogEntry("UPDATE", "Crowd observations now include Cell Identity (CI) for improved tower matching"),
+    )),
+    VersionLog("1.0.1.4", "Feb 2026", listOf(
+        ChangelogEntry("NEW",    "PCI Discovery Tracker — logs every unique Physical Cell ID seen in a session"),
+        ChangelogEntry("NEW",    "Bulk upload discovered PCIs from Settings to seed new coverage areas"),
+        ChangelogEntry("NEW",    "In-app updater — check for and install new releases directly from Settings"),
+    )),
+    VersionLog("1.0.1.0", "Jan 2026", listOf(
+        ChangelogEntry("NEW",    "Initial release — real-time LTE & 5G NR cell scanner"),
+        ChangelogEntry("NEW",    "Carrier resolution chain: exclusive band → FCC geo → crowd DB → PCI inference"),
+        ChangelogEntry("NEW",    "Crowd-sourced tile database — downloads tower data for 80-mile radius"),
+        ChangelogEntry("NEW",    "Drive test mode with GPS tracking and CSV export"),
+        ChangelogEntry("NEW",    "Signal confidence indicators (dark green = verified, grey = unknown)"),
+    )),
+)
+
+@Composable
+private fun ChangelogDialog(onDismiss: () -> Unit) {
+    val tagColor = mapOf(
+        "NEW"    to Color(0xFF4CAF50),
+        "FIX"    to Color(0xFFFF9800),
+        "UPDATE" to Color(0xFF2196F3),
+    )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0D1117))
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("What's New", style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.Bold)
+                TextButton(onClick = onDismiss) { Text("Done", color = Color(0xFF2196F3)) }
+            }
+            Divider(color = Color.DarkGray)
+            LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                CHANGELOG.forEach { versionLog ->
+                    item {
+                        Spacer(Modifier.height(20.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "v${versionLog.version}",
+                                color = Color(0xFFFFD700),
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(versionLog.date, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    items(versionLog.entries) { entry ->
+                        Row(
+                            modifier = Modifier.padding(bottom = 6.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .background(tagColor[entry.tag] ?: Color.Gray, RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    entry.tag,
+                                    color = Color.Black,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Text(entry.text, color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    item { Divider(color = Color(0xFF1E2530)) }
+                }
+                item { Spacer(Modifier.height(24.dp)) }
+            }
+        }
     }
 }
