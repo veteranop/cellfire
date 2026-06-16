@@ -30,3 +30,6 @@ app/release/
 # Tool state (not project source)
 .claude/
 .playwright-mcp/
+
+# Server credentials (deployed manually, never committed)
+fcc_github_token.txt
