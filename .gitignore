@@ -17,3 +17,16 @@ push_rules_config.py
 serviceAccountKey.json
 cellfire_admin.py
 run_admin.bat
+
+# Large FCC bulk data downloads / local caches
+.fcc_cache/*.zip
+cellfire-tiles/
+
+# Build outputs
+*.apk
+*.aab
+app/release/
+
+# Tool state (not project source)
+.claude/
+.playwright-mcp/
