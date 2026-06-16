@@ -144,7 +144,8 @@ class CellRepository @Inject constructor(
                 lon = pci.bestLon,
                 arfcn = pci.arfcn,
                 band = pci.band,
-                source = pci.source
+                source = pci.source,
+                ci = pci.ci
             )
             uploaded++
         }
@@ -188,23 +189,41 @@ class CellRepository @Inject constructor(
         }
     }
 
-    fun updateCarrierForPci(pci: Int, band: String, newCarrier: String) {
+    fun updateCarrierForPci(cell: Cell, newCarrier: String) {
+        val pci = cell.pci
+        val band = cell.band
+        // Update in-memory state immediately
         _uiState.update { currentState ->
-            val newCells = currentState.cells.map { cell ->
-                if (cell.pci == pci && cell.band == band) {
-                    cell.carrier = newCarrier
-                }
-                cell
+            val newCells = currentState.cells.map { c ->
+                if (c.pci == pci && c.band == band) c.carrier = newCarrier
+                c
             }
             currentState.copy(cells = newCells)
         }
         repositoryScope.launch {
+            // Stamp "manual" source so scan loop (priority 5 max) won't overwrite it
             val discovered = discoveredPciDao.getDiscoveredPci(pci, band)
             if (discovered != null) {
                 discovered.carrier = newCarrier
+                discovered.source = "manual"
                 discoveredPciDao.insert(discovered)
             }
         }
+        // Submit to Firebase — propagates to coworkers via tile sync
+        val ta = if (cell is LteCell) cell.timingAdvance else -1
+        CrowdsourceReporter.submit(
+            pci     = cell.pci,
+            tac     = cell.tac,
+            carrier = newCarrier,
+            mnc     = cell.mnc,
+            lat     = cell.latitude,
+            lon     = cell.longitude,
+            arfcn   = cell.arfcn,
+            band    = cell.band,
+            source  = "manual",
+            ci      = cell.ci,
+            ta      = ta
+        )
     }
 
     fun updatePciFlags(pci: Int, band: String, isIgnored: Boolean? = null, isTargeted: Boolean? = null) {
@@ -219,7 +238,7 @@ class CellRepository @Inject constructor(
     }
 
     private val sourcePriority = mapOf(
-        "alpha" to 5, "plmn" to 4, "fcc_band" to 3, "db" to 2, "pci_range" to 1
+        "manual" to 6, "alpha" to 5, "plmn" to 4, "fcc_band" to 3, "db" to 2, "pci_rsrp" to 2, "pci_range" to 1
     )
 
     private suspend fun updateDiscoveredPcis(cells: List<Cell>) {
@@ -244,6 +263,7 @@ class CellRepository @Inject constructor(
                 }
                 if (cell.tac > 0) existingPci.tac = cell.tac
                 if (cell.arfcn > 0) existingPci.arfcn = cell.arfcn
+                if (cell.ci > 0L) existingPci.ci = cell.ci
                 discoveredPciDao.insert(existingPci)
             } else {
                 discoveredPciDao.insert(
@@ -258,7 +278,8 @@ class CellRepository @Inject constructor(
                         mnc = cell.mnc,
                         bestLat = cell.latitude,
                         bestLon = cell.longitude,
-                        source = cell.source
+                        source = cell.source,
+                        ci = cell.ci
                     )
                 )
             }

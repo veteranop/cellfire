@@ -9,7 +9,7 @@ import javax.inject.Singleton
 
 @Database(
     entities = [DiscoveredPci::class, DriveTestPoint::class],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 @Singleton

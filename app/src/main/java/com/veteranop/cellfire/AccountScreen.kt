@@ -55,7 +55,7 @@ fun AccountScreen(navController: NavController, vm: CellFireViewModel) {
 
     Box(modifier = Modifier.fillMaxSize()) {
         Image(
-            painter = painterResource(id = R.drawable.cfbackground),
+            painter = painterResource(id = R.drawable.bg2),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize().alpha(0.4f)
@@ -68,7 +68,7 @@ fun AccountScreen(navController: NavController, vm: CellFireViewModel) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Image(
-                painter = painterResource(id = R.drawable.app_name),
+                painter = painterResource(id = R.drawable.app_name_2),
                 contentDescription = "Cellfire",
                 modifier = Modifier.padding(bottom = 8.dp)
             )
@@ -77,6 +77,13 @@ fun AccountScreen(navController: NavController, vm: CellFireViewModel) {
                     // LoggedIn triggers LaunchedEffect nav — show spinner meanwhile
                     Spacer(modifier = Modifier.height(80.dp))
                     CircularProgressIndicator(color = OrangeGlow)
+                }
+                is AuthState.AwaitingVerification -> {
+                    VerificationPendingScreen(
+                        email        = s.email,
+                        onResend     = { scope.launch { vm.resendVerification(s.email) } },
+                        onBackToLogin = { vm.clearError() }
+                    )
                 }
                 is AuthState.LoggedOut, is AuthState.Error -> {
                     var showRegister by remember { mutableStateOf(false) }
@@ -124,7 +131,7 @@ fun AccountManagementScreen(navController: NavController, vm: CellFireViewModel)
 
     Box(modifier = Modifier.fillMaxSize()) {
         Image(
-            painter = painterResource(id = R.drawable.cfbackground),
+            painter = painterResource(id = R.drawable.bg2),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize().alpha(0.4f)
@@ -137,12 +144,13 @@ fun AccountManagementScreen(navController: NavController, vm: CellFireViewModel)
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Image(
-                painter = painterResource(id = R.drawable.app_name),
+                painter = painterResource(id = R.drawable.app_name_2),
                 contentDescription = "Cellfire",
                 modifier = Modifier.padding(bottom = 8.dp)
             )
             when (val s = authState) {
-                is AuthState.Loading, is AuthState.LoggedOut, is AuthState.Error -> {
+                is AuthState.Loading, is AuthState.LoggedOut, is AuthState.Error,
+                is AuthState.AwaitingVerification -> {
                     Spacer(modifier = Modifier.height(80.dp))
                     CircularProgressIndicator(color = OrangeGlow)
                 }
@@ -469,6 +477,65 @@ private fun AccountDashboard(
     Spacer(modifier = Modifier.height(12.dp))
     TextButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) {
         Text("Sign Out", color = Color.Gray, fontSize = 14.sp)
+    }
+}
+
+@Composable
+private fun VerificationPendingScreen(
+    email:        String,
+    onResend:     () -> Unit,
+    onBackToLogin: () -> Unit
+) {
+    var resendSent    by remember { mutableStateOf(false) }
+    var resendLoading by remember { mutableStateOf(false) }
+
+    Spacer(modifier = Modifier.height(24.dp))
+
+    Text("Check Your Email", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+    Spacer(modifier = Modifier.height(12.dp))
+    Text(
+        "We sent a verification link to:",
+        color = Color.Gray, fontSize = 14.sp, textAlign = TextAlign.Center
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(email, color = OrangeGlow, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+    Spacer(modifier = Modifier.height(16.dp))
+    Text(
+        "Click the link in that email to verify your account and start your 30-day free trial.",
+        color = Color.Gray, fontSize = 13.sp, textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth()
+    )
+
+    Spacer(modifier = Modifier.height(32.dp))
+
+    if (resendSent) {
+        Text(
+            "Sent! Check your inbox (and spam folder).",
+            color = Color(0xFF6FCF97), fontSize = 13.sp, textAlign = TextAlign.Center
+        )
+    } else {
+        OutlinedButton(
+            onClick  = {
+                resendLoading = true
+                onResend()
+                resendSent = true
+                resendLoading = false
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled  = !resendLoading,
+            colors   = ButtonDefaults.outlinedButtonColors(contentColor = OrangeGlow),
+            border   = ButtonDefaults.outlinedButtonBorder.copy(
+                brush = androidx.compose.ui.graphics.SolidColor(OrangeGlow)
+            )
+        ) {
+            if (resendLoading) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = OrangeGlow, strokeWidth = 2.dp)
+            else Text("Resend Verification Email")
+        }
+    }
+
+    Spacer(modifier = Modifier.height(12.dp))
+    TextButton(onClick = onBackToLogin, modifier = Modifier.fillMaxWidth()) {
+        Text("← Back to Sign In", color = Color.Gray, fontSize = 13.sp)
     }
 }
 

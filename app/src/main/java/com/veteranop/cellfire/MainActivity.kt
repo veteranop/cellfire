@@ -155,7 +155,8 @@ fun SplashScreen(navController: NavController, vm: CellFireViewModel) {
             is AuthState.LoggedIn -> navController.navigate("start") {
                 popUpTo("splash") { inclusive = true }
             }
-            is AuthState.LoggedOut, is AuthState.Error -> navController.navigate("login") {
+            is AuthState.LoggedOut, is AuthState.Error,
+            is AuthState.AwaitingVerification -> navController.navigate("login") {
                 popUpTo("splash") { inclusive = true }
             }
         }
@@ -364,8 +365,10 @@ fun ScanScreen(navController: NavController, vm: CellFireViewModel) {
                                 val rowMatchLevel = remember(cell.pci, cell.tac, cell.isRegistered, cell.source) {
                                     when {
                                         cell.isRegistered -> DbMatchLevel.EXACT
+                                        cell.source == "manual" -> DbMatchLevel.HIGH_CONF
                                         cell.source == "exclusive_band" -> DbMatchLevel.HIGH_CONF
                                         cell.source == "fcc_band" -> DbMatchLevel.HIGH_CONF
+                                        cell.source == "pci_rsrp" -> DbMatchLevel.MED_CONF
                                         else -> CellfireDbManager.lookupMatchLevel(cell.pci, cell.tac)
                                     }
                                 }
@@ -458,8 +461,10 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                         val matchLevel = remember(currentCell.pci, currentCell.tac, currentCell.isRegistered, currentCell.source) {
                             when {
                                 currentCell.isRegistered -> DbMatchLevel.EXACT
+                                currentCell.source == "manual" -> DbMatchLevel.HIGH_CONF
                                 currentCell.source == "exclusive_band" -> DbMatchLevel.HIGH_CONF
                                 currentCell.source == "fcc_band" -> DbMatchLevel.HIGH_CONF
+                                currentCell.source == "pci_rsrp" -> DbMatchLevel.MED_CONF
                                 else -> CellfireDbManager.lookupMatchLevel(currentCell.pci, currentCell.tac)
                             }
                         }
@@ -504,13 +509,19 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
                     if (currentCell.isRegistered) {
                         val taDisplay = when (val c = currentCell) {
                             is LteCell -> c.taMeters
-                                ?.let { m -> "${c.timingAdvance}  (~${m}m / ${"%.2f".format(m / 1609.34)}mi)" }
+                                ?.let { m -> "${c.timingAdvance}  (~${m}m / ${"%.2f".format(m / 1609.34)}mi)*" }
                                 ?: "not reported by device"
-                            is NrCell  -> "N/A (5G NR — not exposed by Android)"
+                            is NrCell  -> c.taMeters
+                                ?.let { m -> "${c.timingAdvance}  (~${m}m / ${"%.2f".format(m / 1609.34)}mi)*" }
+                                ?: "not available (NR)"
                             else       -> null
                         }
                         if (taDisplay != null)
                             Text("TA: $taDisplay", color = Color(0xFFADD8E6))
+                        val showTaFootnote = (currentCell is LteCell && (currentCell as LteCell).taMeters != null) ||
+                                            (currentCell is NrCell  && (currentCell as NrCell).taMeters  != null)
+                        if (showTaFootnote)
+                            Text("* TA refreshes when modem re-syncs (data activity)", color = Color(0xFF888888), fontSize = 10.sp)
                     }
                     Text("Latitude: ${currentCell.latitude}", color = Color.White)
                     Text("Longitude: ${currentCell.longitude}", color = Color.White)
@@ -594,7 +605,7 @@ fun CellDetailScreen(vm: CellFireViewModel, pci: Int, arfcn: Int, navController:
             confirmButton = {
                 Button(
                     onClick = {
-                        vm.updateCarrier(pci, currentCell.band, selectedCarrier)
+                        vm.updateCarrier(currentCell, selectedCarrier)
                         showDialog = false
                     }
                 ) {
@@ -1336,6 +1347,29 @@ private data class ChangelogEntry(val tag: String, val text: String)
 private data class VersionLog(val version: String, val date: String, val entries: List<ChangelogEntry>)
 
 private val CHANGELOG = listOf(
+    VersionLog("1.0.1.20", "May 2026", listOf(
+        ChangelogEntry("FIX",    "Subscription status no longer shows Inactive due to a network hiccup or expired session token — last known good license is cached and used as fallback"),
+        ChangelogEntry("FIX",    "App no longer logs users out after OS updates or screen-lock changes that reset the Android keystore"),
+    )),
+    VersionLog("1.0.1.19", "May 2026", listOf(
+        ChangelogEntry("NEW",    "PCI+RSRP inference: unknown neighbor cells now inherit the carrier of a registered cell with the same PCI when signal strength matches within 5 dB — resolves same-tower multi-band unknowns automatically"),
+        ChangelogEntry("UPDATE", "Inferred cells show yellow dot (medium confidence) and contribute to crowdsource DB"),
+    )),
+    VersionLog("1.0.1.18", "May 2026", listOf(
+        ChangelogEntry("UPDATE", "5G NR cell detail now shows TA field (NR TA not exposed by Android API — placeholder ready for when it becomes available)"),
+    )),
+    VersionLog("1.0.1.17", "May 2026", listOf(
+        ChangelogEntry("FIX",    "Frequency calculator rewritten against full 3GPP TS 36.101 table — Band 4 UL was 0.0; added B17, B25, B26, B29, B30, B48"),
+        ChangelogEntry("FIX",    "NR frequency UL offsets corrected for n2, n5, n12–n14, n25, n26, n66, n71; mmWave NRARFCN ranges corrected"),
+        ChangelogEntry("FIX",    "Carrier EARFCN map: added B17/B25/B26/B29/B30 entries for all states from FCC license data"),
+        ChangelogEntry("FIX",    "Signal rules: AT&T added to B25; US Cellular added to B26; AT&T+Verizon added to B29; earfcn_ranges table fully corrected"),
+        ChangelogEntry("NEW",    "Manual carrier edits now score highest confidence (green dot), protected from scan loop overwrites, and submitted to shared crowdsource DB — your correction syncs to your team"),
+    )),
+    VersionLog("1.0.1.15", "May 2026", listOf(
+        ChangelogEntry("FIX",    "Service now reliably stops when app is closed — prevents GPS running in background"),
+        ChangelogEntry("FIX",    "Location cleanup guaranteed on service destroy — no more battery drain after swipe-away"),
+        ChangelogEntry("UPDATE", "TA display now notes that readings update on modem re-sync (data activity)"),
+    )),
     VersionLog("1.0.1.14", "May 2026", listOf(
         ChangelogEntry("FIX",    "Exclusive band cells (n71, B13, B14, n41, etc.) now show correct high-confidence green dot regardless of database score — band law is ground truth"),
     )),

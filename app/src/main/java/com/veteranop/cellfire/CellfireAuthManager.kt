@@ -31,6 +31,7 @@ sealed class AuthState {
     object Loading : AuthState()
     object LoggedOut : AuthState()
     data class LoggedIn(val username: String, val license: LicenseInfo) : AuthState()
+    data class AwaitingVerification(val email: String) : AuthState()
     data class Error(val message: String) : AuthState()
 }
 
@@ -43,19 +44,37 @@ class CellfireAuthManager @Inject constructor(
     companion object {
         private const val API_BASE = "https://cellfire.io/index.php?option=com_cellfireapi&task="
         private const val PREFS_FILE = "cellfire_auth"
-        private const val KEY_JWT = "jwt"
-        private const val KEY_USERNAME = "username"
+        private const val KEY_JWT              = "jwt"
+        private const val KEY_USERNAME         = "username"
+        private const val KEY_LICENSE_PLAN     = "license_plan"
+        private const val KEY_LICENSE_LABEL    = "license_label"
+        private const val KEY_LICENSE_ACTIVE   = "license_active"
+        private const val KEY_LICENSE_EXPIRES  = "license_expires"
+        private const val KEY_LICENSE_STRIPE   = "license_stripe"
     }
 
     private val prefs by lazy {
-        val masterKey = MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        EncryptedSharedPreferences.create(
-            context, PREFS_FILE, masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
+        fun build(): android.content.SharedPreferences {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            return EncryptedSharedPreferences.create(
+                context, PREFS_FILE, masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        }
+        try {
+            build()
+        } catch (e: Exception) {
+            // Keystore invalidated (OS update, screen-lock change, etc.) — wipe and recreate.
+            // User will need to log in again, but won't be stuck in a broken state.
+            context.deleteSharedPreferences(PREFS_FILE)
+            try { build() } catch (e2: Exception) {
+                // Absolute last resort — plain prefs (no sensitive data survives reboot)
+                context.getSharedPreferences(PREFS_FILE + "_plain", Context.MODE_PRIVATE)
+            }
+        }
     }
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
@@ -69,7 +88,9 @@ class CellfireAuthManager @Inject constructor(
     fun getStoredToken(): String? = prefs.getString(KEY_JWT, null)
     fun getStoredUsername(): String? = prefs.getString(KEY_USERNAME, null)
 
-    /** Called on app start — restores session if token exists */
+    /** Called on app start — restores session if token exists.
+     *  On server failure, uses the last cached license so paying users aren't
+     *  shown "Inactive" due to a temporary network issue or expired JWT. */
     suspend fun restoreSession() {
         val token = getStoredToken()
         val username = getStoredUsername()
@@ -79,16 +100,18 @@ class CellfireAuthManager @Inject constructor(
         }
         _authState.value = AuthState.Loading
         val result = verifyLicense(token)
-        _authState.value = result?.let {
-            AuthState.LoggedIn(username, it)
-        } ?: run {
-            // Token expired or invalid — clear it
-            clearSession()
-            AuthState.LoggedOut
+        _authState.value = if (result != null) {
+            cacheLicense(result)
+            AuthState.LoggedIn(username, result)
+        } else {
+            // Server unreachable or JWT expired — use last cached state.
+            // Never show "Inactive" just because we couldn't reach the server.
+            AuthState.LoggedIn(username, getCachedLicense())
         }
     }
 
-    /** Register new account. Returns error string on failure, null on success (also logs user in). */
+    /** Register new account. Returns error string on failure, null on success.
+     *  On success sets AwaitingVerification — no JWT issued until email is confirmed. */
     suspend fun register(username: String, email: String, password: String): String? = withContext(Dispatchers.IO) {
         _authState.value = AuthState.Loading
         try {
@@ -97,23 +120,33 @@ class CellfireAuthManager @Inject constructor(
                 put("email", email)
                 put("password", password)
             }
-            val resp   = post("auth.register", body)
-            val status = resp.optString("status")
+            val resp = post("auth.register", body)
             if (!resp.optBoolean("success", false)) {
                 val msg = resp.optString("message", "Registration failed")
                 _authState.value = AuthState.Error(msg)
                 return@withContext msg
             }
-            val token   = resp.optJSONObject("data")?.optString("token") ?: ""
-            val uname   = resp.optJSONObject("data")?.optString("username") ?: username
-            val license = parseLicense(resp.optJSONObject("data")?.optJSONObject("license"))
-            prefs.edit().putString(KEY_JWT, token).putString(KEY_USERNAME, uname).apply()
-            _authState.value = AuthState.LoggedIn(uname, license)
+            // Server returns requires_verification=true — no JWT yet
+            _authState.value = AuthState.AwaitingVerification(email)
             null
         } catch (e: Exception) {
             val msg = e.message ?: "Network error"
             _authState.value = AuthState.Error(msg)
             msg
+        }
+    }
+
+    /** Resend verification email. Returns error string on failure, null on success. */
+    suspend fun resendVerification(identifier: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val body = JSONObject().apply { put("username", identifier) }
+            val resp = post("auth.resend_verify", body)
+            if (!resp.optBoolean("success", false)) {
+                return@withContext resp.optString("message", "Failed to resend")
+            }
+            null
+        } catch (e: Exception) {
+            e.message ?: "Network error"
         }
     }
 
@@ -136,6 +169,7 @@ class CellfireAuthManager @Inject constructor(
             val data    = resp.optJSONObject("data") ?: resp
             val token   = data.optString("token")
             val license = parseLicense(data.optJSONObject("license"))
+            cacheLicense(license)
             prefs.edit()
                 .putString(KEY_JWT, token)
                 .putString(KEY_USERNAME, username)
@@ -153,20 +187,24 @@ class CellfireAuthManager @Inject constructor(
     suspend fun verifyLicense(token: String): LicenseInfo? = withContext(Dispatchers.IO) {
         try {
             val resp = getWithAuth("license.verify", token)
-            // API returns {"success": true/false, "data": {"plan": "...", "exp": 123, "username": "..."}}
             if (!resp.optBoolean("success", false)) return@withContext null
             val data     = resp.optJSONObject("data") ?: return@withContext null
             val planType = data.optString("plan", "demo")
-            val exp      = data.optLong("exp", 0L)
-            val expiresAt = if (exp > 0)
-                java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
-                    .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
-                    .format(java.util.Date(exp * 1000L))
-            else null
+            // Prefer the real DB subscription expiry; fall back to JWT exp for legacy responses
+            val expiresAt = data.optString("expires_at")
+                .takeIf { it.isNotBlank() && it != "null" }
+                ?: run {
+                    val exp = data.optLong("exp", 0L)
+                    if (exp > 0)
+                        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                            .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                            .format(java.util.Date(exp * 1000L))
+                    else null
+                }
             LicenseInfo(
                 planType          = planType,
                 planLabel         = planLabel(planType),
-                isActive          = true,   // server confirmed active
+                isActive          = true,
                 expiresAt         = expiresAt,
                 stripeStatus      = null,
                 hasStripeCustomer = false
@@ -195,13 +233,42 @@ class CellfireAuthManager @Inject constructor(
     }
 
     fun clearError() {
-        if (_authState.value is AuthState.Error) {
+        if (_authState.value is AuthState.Error || _authState.value is AuthState.AwaitingVerification) {
             _authState.value = AuthState.LoggedOut
         }
     }
 
     private fun clearSession() {
         prefs.edit().remove(KEY_JWT).remove(KEY_USERNAME).apply()
+    }
+
+    // ─── License cache ────────────────────────────────────────────────────────
+
+    private fun cacheLicense(license: LicenseInfo) {
+        prefs.edit()
+            .putString(KEY_LICENSE_PLAN,    license.planType)
+            .putString(KEY_LICENSE_LABEL,   license.planLabel)
+            .putBoolean(KEY_LICENSE_ACTIVE, license.isActive)
+            .putString(KEY_LICENSE_EXPIRES, license.expiresAt ?: "")
+            .putString(KEY_LICENSE_STRIPE,  license.stripeStatus ?: "")
+            .apply()
+    }
+
+    private fun getCachedLicense(): LicenseInfo {
+        val planType = prefs.getString(KEY_LICENSE_PLAN, "") ?: ""
+        return if (planType.isNotBlank()) {
+            LicenseInfo(
+                planType          = planType,
+                planLabel         = prefs.getString(KEY_LICENSE_LABEL, planLabel(planType)) ?: planLabel(planType),
+                isActive          = prefs.getBoolean(KEY_LICENSE_ACTIVE, true),
+                expiresAt         = prefs.getString(KEY_LICENSE_EXPIRES, "")?.takeIf { it.isNotBlank() },
+                stripeStatus      = prefs.getString(KEY_LICENSE_STRIPE,  "")?.takeIf { it.isNotBlank() },
+                hasStripeCustomer = false
+            )
+        } else {
+            // No cache at all — first login ever failed. Give benefit of the doubt.
+            LicenseInfo("unknown", "Verifying…", isActive = true, null, null, false)
+        }
     }
 
     // ─── HTTP helpers ─────────────────────────────────────────────────────────

@@ -92,9 +92,11 @@ data class NrCell(
     override val fromDb: Boolean = false,
     override val mnc: String = "",
     override val source: String = "",
-    override val ci: Long = 0L     // 36-bit NR Cell Identity; 0 if modem didn't report it
+    override val ci: Long = 0L,    // 36-bit NR Cell Identity; 0 if modem didn't report it
+    val timingAdvance: Int = Int.MAX_VALUE
 ) : Cell() {
     override val type: String = "5G NR"
+    val taMeters: Int? get() = if (timingAdvance in 0..3846) (timingAdvance * 78.125).toInt() else null
 }
 
 data class WcdmaCell(

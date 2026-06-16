@@ -23,6 +23,7 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.infowindow.MarkerInfoWindow
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PciMapScreen(
     navController: NavController,
@@ -47,30 +48,39 @@ fun PciMapScreen(
         points = list
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Points: ${points.size}", style = MaterialTheme.typography.titleMedium)
-                Button(onClick = {
-                    scope.launch {
-                        val file = vm.cellRepository.exportPciCsv(pci)
-                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/csv"
-                            putExtra(Intent.EXTRA_STREAM, uri)
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    Scaffold(
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        topBar = {
+            TopAppBar(
+                title = { Text("Points: ${points.size}", color = androidx.compose.ui.graphics.Color.White) },
+                actions = {
+                    Button(onClick = {
+                        scope.launch {
+                            val file = vm.cellRepository.exportPciCsv(pci)
+                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/csv"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Share CSV"))
                         }
-                        context.startActivity(Intent.createChooser(intent, "Share CSV"))
+                    }) {
+                        Text("Export CSV")
                     }
-                }) {
-                    Text("Export CSV")
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showAll = !showAll }
+            ) {
+                Text(if (showAll) "SHOW PCI" else "SHOW ALL")
             }
-
+        }
+    ) { innerPadding ->
+        Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             AndroidView(
                 factory = { ctx ->
                     MapView(ctx).apply {
@@ -80,7 +90,7 @@ fun PciMapScreen(
                         controller.setCenter(GeoPoint(43.489, -112.022)) // INL default
                     }
                 },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxSize(),
                 update = { mv ->
                     // Optimization: Use tag to only update markers when points actually change.
                     // This prevents constant re-creation which causes lag and click failures.
@@ -88,11 +98,11 @@ fun PciMapScreen(
                     if (mv.tag != pointsKey) {
                         mv.tag = pointsKey
                         mv.overlays.clear()
-                        
+
                         if (points.isNotEmpty()) {
                             // Create one info window instance to be shared/reused
                             val commonInfoWindow = MarkerInfoWindow(R.layout.bubble, mv)
-                            
+
                             val latList = points.map { it.latitude }
                             val lonList = points.map { it.longitude }
                             val bounds = BoundingBox(
@@ -108,13 +118,13 @@ fun PciMapScreen(
                                 marker.position = loc
                                 marker.title = "PCI ${point.pci}"
                                 marker.snippet = "RSRP: ${point.rsrp} dBm\nSNR: ${point.snr} dB\nBand: ${point.band}"
-                                
+
                                 val color = when {
                                     point.rsrp > -85 -> Color.GREEN
                                     point.rsrp > -105 -> Color.YELLOW
                                     else -> Color.RED
                                 }
-                                
+
                                 val drawable = GradientDrawable().apply {
                                     shape = GradientDrawable.OVAL
                                     setColor(color)
@@ -126,7 +136,7 @@ fun PciMapScreen(
                                 marker.infoWindow = commonInfoWindow
                                 mv.overlays.add(marker)
                             }
-                            
+
                             // Auto-zoom to fit the new data set
                             mv.post {
                                 try {
@@ -140,23 +150,14 @@ fun PciMapScreen(
                     }
                 }
             )
-        }
 
-        FloatingActionButton(
-            onClick = { showAll = !showAll },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(16.dp)
-        ) {
-            Text(if (showAll) "SHOW PCI" else "SHOW ALL")
-        }
-
-        if (points.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(bottom = 80.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("No drive data collected yet.", style = MaterialTheme.typography.bodyLarge)
+            if (points.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(bottom = 80.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No drive data collected yet.", style = MaterialTheme.typography.bodyLarge)
+                }
             }
         }
     }

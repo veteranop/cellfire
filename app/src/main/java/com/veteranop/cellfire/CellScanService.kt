@@ -152,9 +152,10 @@ class CellScanService : LifecycleService() {
     }
 
     private fun stopScanning() {
+        // Remove location updates first — prevents callbacks firing after coroutines are cancelled
+        try { fusedLocationClient.removeLocationUpdates(locationCallback) } catch (_: Exception) {}
         regularJob?.cancel()
         stopDeepScan()
-        fusedLocationClient.removeLocationUpdates(locationCallback)
         cellRepository.setServiceActive(false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -163,6 +164,14 @@ class CellScanService : LifecycleService() {
             stopForeground(true)
         }
         stopSelf()
+    }
+
+    override fun onDestroy() {
+        // Safety net: guarantee cleanup even if stopScanning() was never reached
+        try { fusedLocationClient.removeLocationUpdates(locationCallback) } catch (_: Exception) {}
+        regularJob?.cancel()
+        deepScanJob?.cancel()
+        super.onDestroy()
     }
 
     private fun refresh() {
@@ -212,7 +221,7 @@ class CellScanService : LifecycleService() {
                 override fun onResults(results: MutableList<CellInfo>) {
                     results.takeIf { it.isNotEmpty() }?.let { list ->
                         list.forEach { cellRepository.addLogLine(it.toString()) }
-                        val cells = list.mapNotNull { parseCellInfo(it) }
+                        val cells = applyPciRsrpInference(list.mapNotNull { parseCellInfo(it) })
                         cellRepository.updateCells(cells)
                         updateNotification("Deep Scan: Found ${cells.size} new towers")
                     }
@@ -242,7 +251,7 @@ class CellScanService : LifecycleService() {
                 telephonyManager.requestCellInfoUpdate(mainExecutor, object : TelephonyManager.CellInfoCallback() {
                     override fun onCellInfo(cellInfo: MutableList<CellInfo>) {
                         cellInfo.forEach { cellRepository.addLogLine(it.toString()) }
-                        val cells = cellInfo.mapNotNull { parseCellInfo(it) }
+                        val cells = applyPciRsrpInference(cellInfo.mapNotNull { parseCellInfo(it) })
                         cellRepository.updateCells(cells)
                     }
 
@@ -266,7 +275,7 @@ class CellScanService : LifecycleService() {
         try {
             val list = telephonyManager.allCellInfo ?: return
             list.forEach { cellRepository.addLogLine(it.toString()) }
-            val cells = list.mapNotNull { parseCellInfo(it) }
+            val cells = applyPciRsrpInference(list.mapNotNull { parseCellInfo(it) })
             cellRepository.updateCells(cells)
         } catch (e: Exception) {}
     }
@@ -294,6 +303,49 @@ class CellScanService : LifecycleService() {
     private fun updateNotification(text: String) {
         val nm = getSystemService(NotificationManager::class.java)
         nm.notify(NOTIFICATION_ID, createNotification(text))
+    }
+
+    private fun applyPciRsrpInference(cells: List<Cell>): List<Cell> {
+        // Anchors: registered cells with a carrier confirmed by a reliable source
+        val anchors = cells.filter {
+            it.isRegistered &&
+            it.carrier.isNotBlank() &&
+            !it.carrier.equals("unknown", ignoreCase = true) &&
+            it.source !in setOf("pci_range", "")
+        }
+        if (anchors.isEmpty()) return cells
+
+        val crowdsourceEnabled = getSharedPreferences("CellFirePrefs", Context.MODE_PRIVATE)
+            .getBoolean("crowdsource_enabled", true)
+
+        return cells.map { cell ->
+            if (cell.carrier.isNotBlank() && !cell.carrier.equals("unknown", ignoreCase = true)) return@map cell
+
+            val anchor = anchors.firstOrNull { a ->
+                a.pci == cell.pci &&
+                a.arfcn != cell.arfcn &&
+                kotlin.math.abs(a.signalStrength - cell.signalStrength) <= 5
+            } ?: return@map cell
+
+            // Don't override if the cell's band is exclusive to a different carrier
+            val exclusive = CarrierResolver.resolveExclusiveCarrier(cell.band)
+            if (exclusive != null && !exclusive.equals(anchor.carrier, ignoreCase = true)) return@map cell
+
+            if (crowdsourceEnabled && (cell.latitude != 0.0 || cell.longitude != 0.0)) {
+                CrowdsourceReporter.submit(
+                    pci = cell.pci, tac = cell.tac, carrier = anchor.carrier, mnc = anchor.mnc,
+                    lat = cell.latitude, lon = cell.longitude, arfcn = cell.arfcn,
+                    band = cell.band, source = "pci_rsrp", ci = cell.ci
+                )
+            }
+
+            when (cell) {
+                is LteCell   -> cell.copy(carrier = anchor.carrier, source = "pci_rsrp", mnc = anchor.mnc)
+                is NrCell    -> cell.copy(carrier = anchor.carrier, source = "pci_rsrp", mnc = anchor.mnc)
+                is WcdmaCell -> cell.copy(carrier = anchor.carrier, source = "pci_rsrp", mnc = anchor.mnc)
+                is GsmCell   -> cell.copy(carrier = anchor.carrier, source = "pci_rsrp", mnc = anchor.mnc)
+            }
+        }
     }
 
     @SuppressLint("MissingPermission")

@@ -190,13 +190,23 @@ object CarrierResolver {
         
         // Find band from EARFCN
         val band = if (isNr) {
-            // NR-ARFCN to band mapping is more complex, simplified here
+            // NR-ARFCN → band per 3GPP TS 38.104 Table 5.4.2.1-1
+            // FR1 (<3 GHz): F = NRARFCN * 0.005 MHz
+            // FR1 (3–7.125 GHz): F = 3000 + (NRARFCN - 600000) * 0.015 MHz
+            // FR2 (mmWave): F = 24250.08 + (NRARFCN - 2016667) * 0.06 MHz
             when (earfcn) {
-                in 422000..434000 -> 71  // n71
-                in 514000..524000 -> 12  // n12
-                in 620000..680000 -> 77  // n77 C-Band
-                in 2054166..2104165 -> 260 // n260 mmWave
-                in 2016667..2070832 -> 261 // n261 mmWave
+                in 173800..178800   -> 5    // n5   850 MHz FDD
+                in 123400..130400   -> 71   // n71  600 MHz FDD  (T-Mobile)
+                in 145800..149200   -> 12   // n12  700 Lower B FDD
+                in 149200..151200   -> 13   // n13  700 Upper C FDD (Verizon)
+                in 151600..153600   -> 14   // n14  700 Upper D FDD (FirstNet)
+                in 386000..399000   -> 25   // n25  1900 PCS+ FDD (overlaps n2)
+                in 422000..440000   -> 66   // n66  AWS-3 FDD
+                in 499200..537999   -> 41   // n41  2500 TDD  (T-Mobile)
+                in 636667..646667   -> 48   // n48  CBRS TDD  (3.55–3.7 GHz)
+                in 620000..680000   -> 77   // n77  C-Band TDD (3.3–4.2 GHz)
+                in 2070832..2084999 -> 261  // n261 mmWave TDD 27.5–28.35 GHz
+                in 2229166..2279166 -> 260  // n260 mmWave TDD 37–40 GHz
                 else -> null
             }
         } else {

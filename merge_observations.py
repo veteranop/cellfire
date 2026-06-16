@@ -779,6 +779,11 @@ def merge_observation(records: list, obs: dict) -> list:
                 # No confirmed EARFCN yet — accept the neighbor hint as a placeholder
                 rec["arfcn"] = obs_arfcn
 
+            # Store Cell ID when we get one (never overwrite a known CI with 0)
+            obs_ci = int(obs["ci"]) if obs.get("ci") and int(obs["ci"]) > 0 else 0
+            if obs_ci > 0:
+                rec["cellid"] = obs_ci
+
             # Update location as running average weighted by samples
             n = rec["samples"]
             rec["lat"] = ((rec.get("lat", obs["lat"]) * (n - 1)) + obs["lat"]) / n
@@ -798,7 +803,7 @@ def merge_observation(records: list, obs: dict) -> list:
         "carrier":        obs_carrier,
         "lat":            obs.get("lat", 0.0),
         "lon":            obs.get("lon", 0.0),
-        "cellid":         0,
+        "cellid":         int(obs["ci"]) if obs.get("ci") and int(obs["ci"]) > 0 else 0,
         "tac":            tac,
         "range":          0,
         "samples":        1,

@@ -45,6 +45,10 @@ class CellFireViewModel @Inject constructor(
 
     fun clearError() = authManager.clearError()
 
+    fun resendVerification(identifier: String) {
+        viewModelScope.launch { authManager.resendVerification(identifier) }
+    }
+
     suspend fun getPortalUrl(): Result<String> = authManager.getPortalUrl()
 
     val uiState: StateFlow<CellFireUiState> = cellRepository.uiState
@@ -178,8 +182,8 @@ class CellFireViewModel @Inject constructor(
         }
     }
 
-    fun updateCarrier(pci: Int, band: String, newCarrier: String) {
-        cellRepository.updateCarrierForPci(pci, band, newCarrier)
+    fun updateCarrier(cell: Cell, newCarrier: String) {
+        cellRepository.updateCarrierForPci(cell, newCarrier)
     }
 
     fun updatePci(pci: Int, band: String, isIgnored: Boolean? = null, isTargeted: Boolean? = null) {

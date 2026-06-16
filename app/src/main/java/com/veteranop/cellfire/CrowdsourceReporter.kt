@@ -25,11 +25,13 @@ object CrowdsourceReporter {
 
     // Source quality ranking — higher = more reliable
     private val SOURCE_QUALITY = mapOf(
+        "manual"         to 6,  // user-confirmed carrier override (score 85, beats all auto-derived)
         "alpha"          to 5,
         "plmn"           to 4,
         "exclusive_band" to 3,  // band-law lock (B71→T-Mobile, B13→Verizon, etc.)
         "fcc_band"       to 3,
         "db"             to 2,
+        "pci_rsrp"       to 2,  // same PCI + RSRP within 5 dB of registered cell = same tower, different band
         "pci_range"      to 1
     )
 
